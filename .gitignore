@@ -5,3 +5,4 @@ dist/
 .env
 metastore_db/
 spark-warehouse/
+backend/data/uploads/

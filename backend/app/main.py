@@ -1,16 +1,29 @@
+import threading
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import spark_analytics as sa
-from .config import DEMO_CSV, FRONTEND_ORIGINS
+from .config import DEMO_CSV, FRONTEND_ORIGINS, MAX_UPLOAD_MB, UPLOAD_DIR
 
-state = {"report": None}
+DEMO_LABEL = "Demo data (demo_reviews.csv, illustrative, not real research data)"
+state = {"report": None, "source": None}
+load_lock = threading.Lock()  # only one dataset load at a time
+
+
+def _load(path: str, label: str) -> dict:
+    with load_lock:
+        report = sa.load_reviews(path)
+        state["report"] = report
+        state["source"] = label
+    return report
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    state["report"] = sa.load_reviews(str(DEMO_CSV))  # Spark starts once, at startup
+    _load(str(DEMO_CSV), DEMO_LABEL)  # Spark starts once, at startup
     yield
 
 
@@ -23,7 +36,14 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "spark_version": sa.get_spark().version, "cleaning_report": state["report"]}
+    return {"status": "ok", "spark_version": sa.get_spark().version,
+            "source": state["source"], "cleaning_report": state["report"]}
+
+
+@app.get("/api/dataset")
+def dataset():
+    return {"source": state["source"], "cleaning_report": state["report"],
+            "required_columns": sa.REQUIRED_COLUMNS}
 
 
 @app.get("/api/spark/{query_name}")
@@ -31,3 +51,56 @@ def spark_query(query_name: str):
     if query_name not in sa.QUERIES:
         raise HTTPException(404, f"Unknown query. Available: {list(sa.QUERIES)}")
     return sa.run_query(query_name)
+
+
+@app.get("/api/reviews")
+def reviews(search: str = "", airline: str = "", sort: str = "date", order: str = "desc",
+            limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=10000)):
+    try:
+        return sa.search_reviews(search, airline, sort, order, limit, offset)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/upload")
+def upload(file: UploadFile = File(...)):
+    name = file.filename or ""
+    if not name.lower().endswith(".csv"):
+        raise HTTPException(400, "Please upload a file ending in .csv")
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOAD_DIR / f"{uuid.uuid4().hex}.csv"
+    limit_bytes = MAX_UPLOAD_MB * 1024 * 1024
+    size, too_big = 0, False
+
+    with open(dest, "wb") as out:  # stream to disk in 1 MB chunks, never all in memory
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit_bytes:
+                too_big = True
+                break
+            out.write(chunk)
+    if too_big:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(413, f"File is larger than the {MAX_UPLOAD_MB} MB limit.")
+
+    try:
+        report = _load(str(dest), f"Uploaded file: {name}")
+    except ValueError as e:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, str(e))
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "Could not read this file as a CSV. Check it is a "
+                                 "comma-separated text file with a header row.")
+
+    for old in UPLOAD_DIR.glob("*.csv"):  # keep only the active upload
+        if old != dest:
+            old.unlink(missing_ok=True)
+    return {"message": "Upload processed", "source": state["source"], "cleaning_report": report}
+
+
+@app.post("/api/reset")
+def reset():
+    report = _load(str(DEMO_CSV), DEMO_LABEL)
+    return {"message": "Demo data restored", "source": state["source"], "cleaning_report": report}
