@@ -1,0 +1,12 @@
+airline,review,rating,date
+SkyWays,"Flight was delayed two hours and nobody told us why.",3,2024-01-05
+SkyWays,"Lovely crew, comfortable seats, would fly again.",9,2024-01-12
+BlueJet,"Lost my baggage and customer service was unhelpful.",2,2024-02-03
+BlueJet,"Smooth flight and the food was surprisingly good.",8,2024-02-10
+CloudAir,"Seats were cramped and the cabin was dirty.",4,2024-02-14
+CloudAir,"On time, friendly staff, easy check-in.",9,2024-03-01
+SkyWays,"Average experience, nothing special.",6,2024-03-08
+BlueJet,"Another delay, and rude gate staff.",2,2024-03-15
+CloudAir,"Great legroom and excellent service.",10,2024-03-20
+CloudAir,"Great legroom and excellent service.",10,2024-03-20
+SkyWays,"Review with a bad rating value",99,2024-03-22
