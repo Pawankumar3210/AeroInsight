@@ -1,0 +1,100 @@
+{
+  "run_at_utc": "2026-10-23T12:35:48+00:00",
+  "data": "Synthetic random reviews generated for timing only. Not real airline data.",
+  "task": "Read the CSV, then count reviews and average the rating per airline per month.",
+  "spark_sql": "SELECT airline, date_format(date, 'yyyy-MM') AS month,\n           COUNT(*) AS reviews, ROUND(AVG(rating), 2) AS avg_rating\n    FROM bench_reviews\n    GROUP BY airline, date_format(date, 'yyyy-MM')",
+  "machine": {
+    "cpu_threads": 8,
+    "python": "3.11.17",
+    "spark": "3.5.1",
+    "spark_master": "local[2] (2 threads)",
+    "pandas": "2.2.2",
+    "pandas_threads": 1
+  },
+  "methodology": [
+    "Each size is run 3 times per engine; the median is reported (all runs are listed).",
+    "Both engines read the same CSV from disk, so reading time is included for both.",
+    "One discarded warm-up run happens first so JVM start-up is not counted.",
+    "Spark uses 2 local threads; pandas uses 1. Timings depend on this machine and other running programs.",
+    "A run only counts as valid if both engines return the same number of groups and the same total.",
+    "Results from one laptop do not predict a cluster. Spark is designed for data larger than one machine's memory."
+  ],
+  "results": [
+    {
+      "rows": 1000,
+      "file_mb": 0.07,
+      "spark_median_s": 0.312,
+      "pandas_median_s": 0.017,
+      "spark_runs_s": [
+        0.487,
+        0.295,
+        0.312
+      ],
+      "pandas_runs_s": [
+        0.017,
+        0.017,
+        0.011
+      ],
+      "faster": "pandas",
+      "speed_ratio": 18.35,
+      "results_match": true
+    },
+    {
+      "rows": 10000,
+      "file_mb": 0.66,
+      "spark_median_s": 0.326,
+      "pandas_median_s": 0.025,
+      "spark_runs_s": [
+        0.375,
+        0.316,
+        0.326
+      ],
+      "pandas_runs_s": [
+        0.025,
+        0.037,
+        0.023
+      ],
+      "faster": "pandas",
+      "speed_ratio": 13.04,
+      "results_match": true
+    },
+    {
+      "rows": 100000,
+      "file_mb": 6.6,
+      "spark_median_s": 0.444,
+      "pandas_median_s": 0.161,
+      "spark_runs_s": [
+        0.621,
+        0.439,
+        0.444
+      ],
+      "pandas_runs_s": [
+        0.161,
+        0.176,
+        0.145
+      ],
+      "faster": "pandas",
+      "speed_ratio": 2.76,
+      "results_match": true
+    },
+    {
+      "rows": 500000,
+      "file_mb": 33.0,
+      "spark_median_s": 0.922,
+      "pandas_median_s": 0.647,
+      "spark_runs_s": [
+        0.928,
+        0.916,
+        0.922
+      ],
+      "pandas_runs_s": [
+        0.647,
+        0.658,
+        0.619
+      ],
+      "faster": "pandas",
+      "speed_ratio": 1.43,
+      "results_match": true
+    }
+  ]
+}
