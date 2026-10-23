@@ -297,16 +297,19 @@ def run_query(name: str) -> dict:
     }
 
 
-def search_reviews(search: str, airline: str, sort: str, order: str,
-                   limit: int, offset: int, sentiment: str = "") -> dict:
-    """Filter, sort and page through reviews (Spark DataFrame API, not SQL)."""
-    if sort not in SORTABLE_COLUMNS:
-        raise ValueError(f"sort must be one of {sorted(SORTABLE_COLUMNS)}")
-    if order not in ("asc", "desc"):
-        raise ValueError("order must be 'asc' or 'desc'")
+def _parse_date(value: str, name: str):
+    from datetime import date
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{name} must look like YYYY-MM-DD")
+
+
+def filtered_reviews(search: str = "", airline: str = "", sentiment: str = "",
+                     min_rating=None, max_rating=None, date_from: str = "", date_to: str = ""):
+    """Return the reviews DataFrame with the user's filters applied."""
     if sentiment and sentiment not in ("positive", "neutral", "negative"):
         raise ValueError("sentiment must be positive, neutral or negative")
-
     df = get_spark().table("reviews")
     if sentiment:
         if "sentiment" not in df.columns:
@@ -316,7 +319,29 @@ def search_reviews(search: str, airline: str, sort: str, order: str,
         df = df.filter(F.col("airline") == airline)
     if search:
         df = df.filter(F.lower(F.col("review")).contains(search.lower()))
+    if min_rating is not None:
+        df = df.filter(F.col("rating") >= min_rating)
+    if max_rating is not None:
+        df = df.filter(F.col("rating") <= max_rating)
+    if date_from:
+        df = df.filter(F.col("date") >= F.lit(_parse_date(date_from, "date_from")))
+    if date_to:
+        df = df.filter(F.col("date") <= F.lit(_parse_date(date_to, "date_to")))
+    return df
 
+
+def search_reviews(search: str, airline: str, sort: str, order: str,
+                   limit: int, offset: int, sentiment: str = "",
+                   min_rating=None, max_rating=None,
+                   date_from: str = "", date_to: str = "") -> dict:
+    """Filter, sort and page through reviews (Spark DataFrame API, not SQL)."""
+    if sort not in SORTABLE_COLUMNS:
+        raise ValueError(f"sort must be one of {sorted(SORTABLE_COLUMNS)}")
+    if order not in ("asc", "desc"):
+        raise ValueError("order must be 'asc' or 'desc'")
+
+    df = filtered_reviews(search, airline, sentiment, min_rating, max_rating,
+                          date_from, date_to)
     total = df.count()
     col = F.col(sort).desc_nulls_last() if order == "desc" else F.col(sort).asc_nulls_last()
     rows = df.orderBy(col, "review").limit(offset + limit).collect()[offset:]

@@ -1,9 +1,21 @@
 import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
+import About from "./pages/About";
+import Analyzer from "./pages/Analyzer";
+import Compare from "./pages/Compare";
+import Explorer from "./pages/Explorer";
+import Insights from "./pages/Insights";
 import Overview from "./pages/Overview";
 import { useTheme } from "./theme";
 
-const NAV = [{ to: "/", label: "Overview" }];
+const NAV = [
+  { to: "/", label: "Overview" },
+  { to: "/compare", label: "Airline Comparison" },
+  { to: "/explorer", label: "Review Explorer" },
+  { to: "/analyzer", label: "Live Sentiment Analyzer" },
+  { to: "/spark", label: "Spark SQL Insights" },
+  { to: "/about", label: "About Project" },
+];
 
 export default function App() {
   const { dark, toggle } = useTheme();
@@ -61,6 +73,11 @@ export default function App() {
         <main className="mx-auto max-w-7xl p-4 sm:p-6">
           <Routes>
             <Route path="/" element={<Overview />} />
+            <Route path="/compare" element={<Compare />} />
+            <Route path="/explorer" element={<Explorer />} />
+            <Route path="/analyzer" element={<Analyzer />} />
+            <Route path="/spark" element={<Insights />} />
+            <Route path="/about" element={<About />} />
           </Routes>
         </main>
       </div>

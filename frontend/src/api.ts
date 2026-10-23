@@ -55,3 +55,11 @@ export interface Dataset {
   };
   sentiment: null | { method: string | null; scored_rows: number; unscored_rows: number; seconds: number; note: string };
 }
+
+export const API_BASE = BASE;
+
+export async function upload<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<T>(path, { method: "POST", body: form });
+}

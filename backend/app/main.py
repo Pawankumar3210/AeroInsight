@@ -1,3 +1,5 @@
+import csv
+import io
 import threading
 import time
 import uuid
@@ -5,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import sentiment as sent
@@ -63,11 +66,15 @@ def spark_query(query_name: str):
 
 @app.get("/api/reviews")
 def reviews(search: str = "", airline: str = "", sentiment: str = "",
+            min_rating: float | None = None, max_rating: float | None = None,
+            date_from: str = "", date_to: str = "",
             sort: str = "date", order: str = "desc",
             limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=10000)):
     try:
         return sa.search_reviews(search, airline, sort, order, limit, offset,
-                                 sentiment=sentiment)
+                                 sentiment=sentiment, min_rating=min_rating,
+                                 max_rating=max_rating, date_from=date_from,
+                                 date_to=date_to)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -151,3 +158,42 @@ def upload(file: UploadFile = File(...)):
 def reset():
     report = _load(str(DEMO_CSV), DEMO_LABEL)
     return {"message": "Demo data restored", "source": state["source"], "cleaning_report": report}
+
+@app.get("/api/queries")
+def list_queries():
+    return [{"name": k, "purpose": v["purpose"], "needs_sentiment": v.get("needs_sentiment", False)}
+            for k, v in sa.QUERIES.items()]
+
+
+EXPORT_MAX_ROWS = 100_000
+
+
+@app.get("/api/export")
+def export(search: str = "", airline: str = "", sentiment: str = "",
+           min_rating: float | None = None, max_rating: float | None = None,
+           date_from: str = "", date_to: str = ""):
+    """Download the filtered reviews (with sentiment, if scored) as a CSV file."""
+    try:
+        df = sa.filtered_reviews(search, airline, sentiment, min_rating, max_rating,
+                                 date_from, date_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    columns = df.columns
+
+    def stream():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        yield buf.getvalue()
+        for i, row in enumerate(df.orderBy("date", "review").toLocalIterator()):
+            if i >= EXPORT_MAX_ROWS:
+                break
+            buf.seek(0)
+            buf.truncate(0)
+            writer.writerow(row)
+            yield buf.getvalue()
+
+    return StreamingResponse(
+        stream(), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="aeroinsight_reviews.csv"'},
+    )
