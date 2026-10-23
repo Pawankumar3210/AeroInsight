@@ -1,16 +1,19 @@
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
+from . import sentiment as sent
 from . import spark_analytics as sa
-from .config import DEMO_CSV, FRONTEND_ORIGINS, MAX_UPLOAD_MB, UPLOAD_DIR
+from .config import DEMO_CSV, FRONTEND_ORIGINS, MAX_SCORE_ROWS, MAX_UPLOAD_MB, UPLOAD_DIR
 
 DEMO_LABEL = "Demo data (demo_reviews.csv, illustrative, not real research data)"
-state = {"report": None, "source": None}
-load_lock = threading.Lock()  # only one dataset load at a time
+state = {"report": None, "source": None, "sentiment": None}
+load_lock = threading.Lock()  # one dataset load or scoring run at a time
 
 
 def _load(path: str, label: str) -> dict:
@@ -18,6 +21,7 @@ def _load(path: str, label: str) -> dict:
         report = sa.load_reviews(path)
         state["report"] = report
         state["source"] = label
+        state["sentiment"] = None  # a new dataset has not been scored yet
     return report
 
 
@@ -43,25 +47,68 @@ def health():
 @app.get("/api/dataset")
 def dataset():
     return {"source": state["source"], "cleaning_report": state["report"],
-            "required_columns": sa.REQUIRED_COLUMNS}
+            "required_columns": sa.REQUIRED_COLUMNS, "sentiment": state["sentiment"]}
 
 
 @app.get("/api/spark/{query_name}")
 def spark_query(query_name: str):
     if query_name not in sa.QUERIES:
         raise HTTPException(404, f"Unknown query. Available: {list(sa.QUERIES)}")
-    return sa.run_query(query_name)
+    try:
+        return sa.run_query(query_name)
+    except sa.SentimentNotScored:
+        raise HTTPException(409, "This query needs sentiment scores. "
+                                 "Run POST /api/sentiment/score first.")
 
 
 @app.get("/api/reviews")
-def reviews(search: str = "", airline: str = "", sort: str = "date", order: str = "desc",
+def reviews(search: str = "", airline: str = "", sentiment: str = "",
+            sort: str = "date", order: str = "desc",
             limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=10000)):
     try:
-        return sa.search_reviews(search, airline, sort, order, limit, offset)
+        return sa.search_reviews(search, airline, sort, order, limit, offset,
+                                 sentiment=sentiment)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
+# ---------- sentiment ----------
+class PredictIn(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+
+
+@app.get("/api/sentiment/status")
+def sentiment_status():
+    return sent.status()
+
+
+@app.post("/api/sentiment/predict")
+def sentiment_predict(body: PredictIn):
+    try:
+        result = sent.predict([body.text])[0]
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return {**result, "note": sent.DISCLAIMER}
+
+
+@app.post("/api/sentiment/score")
+def sentiment_score():
+    """Score the current dataset's reviews and add sentiment columns."""
+    start = time.perf_counter()
+    with load_lock:
+        try:
+            summary = sa.attach_sentiment(sent.predict, MAX_SCORE_ROWS)
+        except RuntimeError as e:
+            raise HTTPException(503, str(e))
+        summary["seconds"] = round(time.perf_counter() - start, 2)
+        summary["note"] = sent.DISCLAIMER
+        state["sentiment"] = summary
+    return summary
+
+
+# ---------- data ----------
 @app.post("/api/upload")
 def upload(file: UploadFile = File(...)):
     name = file.filename or ""

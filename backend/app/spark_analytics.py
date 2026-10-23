@@ -172,8 +172,121 @@ QUERIES = {
 }
 
 
+# ---- Sentiment support ----
+class SentimentNotScored(Exception):
+    """Raised when a sentiment query runs before reviews have been scored."""
+
+
+def has_sentiment() -> bool:
+    return "sentiment" in get_spark().table("reviews").columns
+
+
+def attach_sentiment(predict_fn, max_rows: int) -> dict:
+    """Score each unique review with predict_fn and add sentiment columns to the view."""
+    spark = get_spark()
+    base = spark.table("reviews")
+    for c in ("sentiment", "sentiment_confidence", "sentiment_method"):
+        if c in base.columns:
+            base = base.drop(c)  # allows re-scoring
+
+    unique_total = base.select("review").distinct().count()
+    texts = [r["review"] for r in base.select("review").distinct().limit(max_rows).collect()]
+    preds = predict_fn(texts) if texts else []
+
+    scores_df = spark.createDataFrame(
+        [(t, p["label"], float(p["confidence"]), p["method"]) for t, p in zip(texts, preds)],
+        "review string, sentiment string, sentiment_confidence double, sentiment_method string",
+    )
+    scored = base.join(scores_df, on="review", how="left").cache()
+    scored_rows = scored.filter(F.col("sentiment").isNotNull()).count()
+    total_rows = scored.count()
+    scored.createOrReplaceTempView("reviews")
+
+    return {
+        "method": preds[0]["method"] if preds else None,
+        "unique_reviews": unique_total,
+        "scored_unique_reviews": len(texts),
+        "scored_rows": scored_rows,
+        "unscored_rows": total_rows - scored_rows,
+    }
+
+
+# These need the sentiment column, so they are only run after scoring.
+SENTIMENT_QUERIES = {
+    "sentiment_counts": {
+        "needs_sentiment": True,
+        "purpose": "Number and percentage of positive, neutral and negative reviews.",
+        "sql": """
+            SELECT sentiment,
+                   COUNT(*) AS reviews,
+                   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
+            FROM reviews
+            WHERE sentiment IS NOT NULL
+            GROUP BY sentiment
+            ORDER BY reviews DESC
+        """,
+    },
+    "sentiment_vs_rating": {
+        "needs_sentiment": True,
+        "purpose": (
+            "Average star rating and average model confidence for each sentiment. "
+            "Large gaps between sentiment and rating can point to model mistakes "
+            "or to mixed reviews."
+        ),
+        "sql": """
+            SELECT sentiment,
+                   COUNT(*) AS reviews,
+                   COUNT(rating) AS rated_reviews,
+                   ROUND(AVG(rating), 2) AS avg_rating,
+                   ROUND(AVG(sentiment_confidence), 3) AS avg_confidence
+            FROM reviews
+            WHERE sentiment IS NOT NULL
+            GROUP BY sentiment
+            ORDER BY avg_rating DESC
+        """,
+    },
+    "negative_trend_monthly": {
+        "needs_sentiment": True,
+        "purpose": "How many reviews each month were negative, and their share of that month.",
+        "sql": """
+            SELECT date_format(date, 'yyyy-MM') AS month,
+                   COUNT(*) AS reviews,
+                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,
+                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)
+                         / COUNT(*), 1) AS negative_pct
+            FROM reviews
+            WHERE date IS NOT NULL AND sentiment IS NOT NULL
+            GROUP BY date_format(date, 'yyyy-MM')
+            ORDER BY month
+        """,
+    },
+    "negative_share_by_airline": {
+        "needs_sentiment": True,
+        "purpose": (
+            f"Share of negative reviews per airline. Airlines with fewer than "
+            f"{MIN_AIRLINE_SAMPLE} scored reviews are left out."
+        ),
+        "sql": f"""
+            SELECT airline,
+                   COUNT(*) AS scored_reviews,
+                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,
+                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)
+                         / COUNT(*), 1) AS negative_pct
+            FROM reviews
+            WHERE sentiment IS NOT NULL
+            GROUP BY airline
+            HAVING COUNT(*) >= {MIN_AIRLINE_SAMPLE}
+            ORDER BY negative_pct DESC
+        """,
+    },
+}
+QUERIES.update(SENTIMENT_QUERIES)
+
+
 def run_query(name: str) -> dict:
     q = QUERIES[name]
+    if q.get("needs_sentiment") and not has_sentiment():
+        raise SentimentNotScored("Reviews have not been scored yet.")
     rows = [r.asDict() for r in get_spark().sql(q["sql"]).collect()]
     return {
         "name": name,
@@ -185,14 +298,20 @@ def run_query(name: str) -> dict:
 
 
 def search_reviews(search: str, airline: str, sort: str, order: str,
-                   limit: int, offset: int) -> dict:
+                   limit: int, offset: int, sentiment: str = "") -> dict:
     """Filter, sort and page through reviews (Spark DataFrame API, not SQL)."""
     if sort not in SORTABLE_COLUMNS:
         raise ValueError(f"sort must be one of {sorted(SORTABLE_COLUMNS)}")
     if order not in ("asc", "desc"):
         raise ValueError("order must be 'asc' or 'desc'")
+    if sentiment and sentiment not in ("positive", "neutral", "negative"):
+        raise ValueError("sentiment must be positive, neutral or negative")
 
     df = get_spark().table("reviews")
+    if sentiment:
+        if "sentiment" not in df.columns:
+            raise ValueError("Score the reviews first (POST /api/sentiment/score).")
+        df = df.filter(F.col("sentiment") == sentiment)
     if airline:
         df = df.filter(F.col("airline") == airline)
     if search:
