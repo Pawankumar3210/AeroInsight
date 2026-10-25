@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
+import { useDemoMode } from "./api";
 import About from "./pages/About";
 import Analyzer from "./pages/Analyzer";
 import Compare from "./pages/Compare";
@@ -20,6 +21,7 @@ const NAV = [
 export default function App() {
   const { dark, toggle } = useTheme();
   const [open, setOpen] = useState(false);
+  const demo = useDemoMode();
 
   return (
     <div className="min-h-screen lg:flex">
@@ -70,6 +72,13 @@ export default function App() {
             {dark ? "☀ Light" : "☾ Dark"}
           </button>
         </header>
+        {demo && (
+          <div role="status" className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <strong>Demo snapshot.</strong> The live backend is not connected, so you are seeing results saved from
+            real Spark SQL queries and transformer predictions run on {demo.replace("T", " ").slice(0, 16)} UTC. No
+            query or model is running now. The analyzer, scoring and uploads need the live backend.
+          </div>
+        )}
         <main className="mx-auto max-w-7xl p-4 sm:p-6">
           <Routes>
             <Route path="/" element={<Overview />} />

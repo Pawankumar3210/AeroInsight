@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { API_BASE, ApiError, get, post, upload } from "../api";
+import { API_BASE, ApiError, get, post, upload, useDemoMode } from "../api";
 import type { Dataset, QueryResult } from "../api";
 import { Badge, ScoreNotice } from "../components";
 import { Card } from "../ui";
@@ -121,6 +121,7 @@ export default function Explorer() {
     }
   }
 
+  const demo = useDemoMode();
   const scored = !!ds?.sentiment;
   const uploadsOn = ds?.uploads_enabled !== false;
   const pages = res ? Math.max(1, Math.ceil(res.total / PAGE)) : 1;
@@ -146,12 +147,12 @@ export default function Explorer() {
               </button>
             </>
           )}
-          <a
+          {!demo && <a
             href={`${API_BASE}/api/export?${filterParams().toString()}`}
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-white/20"
           >
             Download filtered CSV
-          </a>
+          </a>}
         </div>
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
           {uploadsOn
