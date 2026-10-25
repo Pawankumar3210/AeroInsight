@@ -36,7 +36,6 @@ export default function Explorer() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // dataset info + airline list (reloaded after upload / scoring)
   useEffect(() => {
     get<Dataset>("/api/dataset").then(setDs).catch(() => setDs(null));
     get<QueryResult<{ airline: string }>>("/api/spark/reviews_by_airline")
@@ -123,6 +122,7 @@ export default function Explorer() {
   }
 
   const scored = !!ds?.sentiment;
+  const uploadsOn = ds?.uploads_enabled !== false;
   const pages = res ? Math.max(1, Math.ceil(res.total / PAGE)) : 1;
   const arrow = (k: SortKey) => (k === sort ? (order === "asc" ? " ▲" : " ▼") : "");
   const th = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400";
@@ -135,13 +135,17 @@ export default function Explorer() {
 
       <Card title="Data">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="cursor-pointer rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600">
-            {busy ? "Working…" : "Upload CSV"}
-            <input type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={onUpload} />
-          </label>
-          <button onClick={resetDemo} disabled={busy} className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-white/20">
-            Restore demo data
-          </button>
+          {uploadsOn && (
+            <>
+              <label className="cursor-pointer rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600">
+                {busy ? "Working…" : "Upload CSV"}
+                <input type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={onUpload} />
+              </label>
+              <button onClick={resetDemo} disabled={busy} className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-white/20">
+                Restore demo data
+              </button>
+            </>
+          )}
           <a
             href={`${API_BASE}/api/export?${filterParams().toString()}`}
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-white/20"
@@ -150,8 +154,10 @@ export default function Explorer() {
           </a>
         </div>
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          Required columns: airline, review, rating (1–10), date (YYYY-MM-DD). Uploading replaces the dataset on the
-          backend for everyone using it. The download contains the reviews matching the filters below, plus sentiment if scored.
+          {uploadsOn
+            ? "Required columns: airline, review, rating (1–10), date (YYYY-MM-DD). Uploading replaces the dataset on the backend for everyone using it. "
+            : "Uploads are turned off on this server, because one shared dataset would be replaced for every visitor. Run the project locally to analyse your own CSV. "}
+          The download contains the reviews matching the filters below, plus sentiment if scored.
         </p>
         {msg && (
           <p role={msg.ok ? "status" : "alert"} className={`mt-2 text-sm ${msg.ok ? "text-emerald-500" : "text-rose-500"}`}>

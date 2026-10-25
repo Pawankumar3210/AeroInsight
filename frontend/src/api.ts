@@ -36,6 +36,14 @@ export const post = <T>(path: string, body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
   });
 
+export const API_BASE = BASE;
+
+export async function upload<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<T>(path, { method: "POST", body: form });
+}
+
 export interface QueryResult<R> {
   name: string;
   purpose: string;
@@ -46,6 +54,7 @@ export interface QueryResult<R> {
 
 export interface Dataset {
   source: string;
+  uploads_enabled?: boolean;
   cleaning_report: {
     rows_in: number;
     rows_kept: number;
@@ -54,12 +63,4 @@ export interface Dataset {
     missing_or_invalid_dates: number;
   };
   sentiment: null | { method: string | null; scored_rows: number; unscored_rows: number; seconds: number; note: string };
-}
-
-export const API_BASE = BASE;
-
-export async function upload<T>(path: string, file: File): Promise<T> {
-  const form = new FormData();
-  form.append("file", file);
-  return request<T>(path, { method: "POST", body: form });
 }
