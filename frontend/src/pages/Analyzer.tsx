@@ -58,7 +58,7 @@ export default function Analyzer() {
             placeholder="e.g. Lost my bags and the staff were rude"
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button type="submit" disabled={busy || !text.trim()} className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-60">
+            <button type="submit" disabled={busy || !text.trim()} className="rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700 disabled:opacity-60">
               {busy ? "Analyzing…" : "Analyze sentiment"}
             </button>
             <span className="text-xs text-slate-500">Try:</span>
@@ -97,7 +97,7 @@ export default function Analyzer() {
                 <div key={k} className="flex items-center gap-3 text-sm">
                   <span className="w-20 capitalize">{k}</span>
                   <div className="h-2 flex-1 rounded-full bg-slate-200 dark:bg-white/10">
-                    <div className={`h-2 rounded-full ${BAR[k] ?? "bg-sky-500"}`} style={{ width: `${v * 100}%` }} />
+                    <div className={`h-2 rounded-full ${BAR[k] ?? "bg-accent-600"}`} style={{ width: `${v * 100}%` }} />
                   </div>
                   <span className="w-14 text-right tabular-nums">{(v * 100).toFixed(1)}%</span>
                 </div>

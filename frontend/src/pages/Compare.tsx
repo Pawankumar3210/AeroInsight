@@ -46,7 +46,7 @@ export default function Compare() {
       <Card>
         <p role="alert" className="font-medium text-rose-500">Could not load data</p>
         <p className="mt-1 text-sm">{error}</p>
-        <button onClick={load} className="mt-4 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white">Try again</button>
+        <button onClick={load} className="mt-4 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white">Try again</button>
       </Card>
     );
   }
@@ -62,7 +62,7 @@ export default function Compare() {
     low: low.find((a) => a.airline === t.airline)?.low_rating_pct ?? null,
     neg: neg?.find((a) => a.airline === t.airline)?.negative_pct ?? null,
   }));
-  const th = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400";
+  const th = "px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400";
   const td = "px-3 py-2 text-sm";
 
   return (
@@ -107,8 +107,8 @@ export default function Compare() {
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
               <XAxis dataKey="airline" {...axis} />
               <YAxis domain={[0, 10]} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(125,211,252,.1)" }} />
-              <Bar dataKey="avg" name="Avg rating" fill="#38bdf8" radius={[6, 6, 0, 0]} />
+              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
+              <Bar dataKey="avg" name="Avg rating" fill="#2BB5A6" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ChartBox>
         </Card>
@@ -118,8 +118,8 @@ export default function Compare() {
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
               <XAxis dataKey="airline" {...axis} />
               <YAxis domain={[0, 100]} unit="%" {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(125,211,252,.1)" }} />
-              <Bar dataKey="low" name="Rated ≤ 4 (%)" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
+              <Bar dataKey="low" name="Rated ≤ 4 (%)" fill="#F5A524" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ChartBox>
         </Card>
@@ -130,8 +130,8 @@ export default function Compare() {
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
                 <XAxis dataKey="airline" {...axis} />
                 <YAxis domain={[0, 100]} unit="%" {...axis} />
-                <Tooltip {...tip} cursor={{ fill: "rgba(125,211,252,.1)" }} />
-                <Bar dataKey="neg" name="Negative (%)" fill="#f43f5e" radius={[6, 6, 0, 0]} />
+                <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
+                <Bar dataKey="neg" name="Negative (%)" fill="#F4617F" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ChartBox>
           ) : <p className="text-sm text-slate-500">Available after scoring.</p>}
@@ -142,8 +142,8 @@ export default function Compare() {
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
               <XAxis type="number" allowDecimals={false} {...axis} />
               <YAxis type="category" dataKey="category" width={110} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(125,211,252,.1)" }} />
-              <Bar dataKey="mentions" name="Mentions" fill="#22d3ee" radius={[0, 6, 6, 0]} />
+              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
+              <Bar dataKey="mentions" name="Mentions" fill="#8B9BFF" radius={[0, 6, 6, 0]} />
             </BarChart>
           </ChartBox>
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">

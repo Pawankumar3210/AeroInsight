@@ -3,5 +3,46 @@
 @tailwind utilities;
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased dark:bg-navy-950 dark:text-slate-100;
+  @apply bg-[#F4F6FB] text-slate-800 antialiased dark:bg-navy-950 dark:text-slate-200;
+}
+.dark body {
+  background-image: radial-gradient(900px 400px at 80% -10%, rgba(51, 197, 178, 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+h1, h2, h3 {
+  @apply font-display tracking-tight;
+}
+:focus-visible {
+  outline: 2px solid #33c5b2;
+  outline-offset: 2px;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.skeleton {
+  background: linear-gradient(100deg, rgba(148, 163, 184, 0.14) 30%, rgba(148, 163, 184, 0.28) 50%, rgba(148, 163, 184, 0.14) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.route-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw 3.4s cubic-bezier(0.4, 0, 0.2, 1) 0.2s forwards;
+}
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

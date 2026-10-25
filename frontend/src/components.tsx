@@ -15,7 +15,7 @@ const TONES: Record<string, string> = {
   positive: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   neutral: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
   negative: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  info: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  info: "bg-accent-500/15 text-accent-600 dark:text-accent-300",
   warn: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
 };
 
@@ -45,12 +45,12 @@ export function ScoreNotice({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 text-sm">
+    <div className="rounded-xl border border-accent-500/30 bg-accent-500/10 p-4 text-sm">
       <p>Sentiment has not been calculated for this dataset yet. Sentiment charts and filters need it.</p>
       <button
         onClick={run}
         disabled={busy}
-        className="mt-3 rounded-lg bg-sky-500 px-4 py-2 font-medium text-white hover:bg-sky-600 disabled:opacity-60"
+        className="mt-3 rounded-lg bg-accent-600 px-4 py-2 font-medium text-white hover:bg-accent-700 disabled:opacity-60"
       >
         {busy ? "Scoring reviews…" : "Score reviews with the transformer"}
       </button>

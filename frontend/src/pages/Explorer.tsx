@@ -126,7 +126,7 @@ export default function Explorer() {
   const uploadsOn = ds?.uploads_enabled !== false;
   const pages = res ? Math.max(1, Math.ceil(res.total / PAGE)) : 1;
   const arrow = (k: SortKey) => (k === sort ? (order === "asc" ? " ▲" : " ▼") : "");
-  const th = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400";
+  const th = "px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400";
 
   return (
     <div className="space-y-4">
@@ -138,7 +138,7 @@ export default function Explorer() {
         <div className="flex flex-wrap items-center gap-3">
           {uploadsOn && (
             <>
-              <label className="cursor-pointer rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600">
+              <label className="cursor-pointer rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700">
                 {busy ? "Working…" : "Upload CSV"}
                 <input type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={onUpload} />
               </label>
@@ -206,7 +206,7 @@ export default function Explorer() {
             <input id="f-to" type="date" className={field} value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(0); }} />
           </div>
         </div>
-        <button onClick={clearFilters} className="mt-3 text-sm text-sky-500 hover:underline">Clear filters</button>
+        <button onClick={clearFilters} className="mt-3 text-sm text-accent-600 hover:underline">Clear filters</button>
       </Card>
 
       <Card>
@@ -217,7 +217,7 @@ export default function Explorer() {
               <tr>
                 {(["airline", "date", "rating"] as SortKey[]).map((k) => (
                   <th key={k} className={th} aria-sort={k === sort ? (order === "asc" ? "ascending" : "descending") : "none"}>
-                    <button onClick={() => toggleSort(k)} className="uppercase">{k}{arrow(k)}</button>
+                    <button onClick={() => toggleSort(k)} className="capitalize">{k}{arrow(k)}</button>
                   </th>
                 ))}
                 <th className={th}>Sentiment</th>

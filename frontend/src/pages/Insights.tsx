@@ -48,13 +48,13 @@ function QueryCard({ meta, scored }: { meta: Meta; scored: boolean }) {
       </div>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{meta.purpose}</p>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400"><strong>For management:</strong> {USE[meta.name] ?? "Supports data-driven service decisions."}</p>
-      <pre className="mt-3 overflow-x-auto rounded-lg bg-navy-900 p-3 text-xs text-sky-100">
+      <pre className="mt-3 overflow-x-auto rounded-lg bg-navy-900 p-3 text-xs text-accent-100">
         {res ? res.sql : "Run the query to see the exact SQL that Spark executed."}
       </pre>
       <button
         onClick={run}
         disabled={busy || blocked}
-        className="mt-3 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+        className="mt-3 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700 disabled:opacity-50"
       >
         {busy ? "Running…" : blocked ? "Score reviews first" : "Run query"}
       </button>
@@ -117,7 +117,7 @@ function Benchmark() {
 
   const total = rep.results.length;
   const pandasWins = rep.results.filter((r) => r.faster === "pandas").length;
-  const th = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400";
+  const th = "px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400";
   const td = "px-3 py-2 text-sm";
 
   return (
@@ -155,7 +155,7 @@ function Benchmark() {
       </div>
       <p className="mt-1 text-xs text-slate-500">Median of repeated runs. Hover a time to see every run.</p>
 
-      <p className="mt-3 rounded-lg bg-sky-500/10 p-3 text-sm">
+      <p className="mt-3 rounded-lg bg-accent-500/10 p-3 text-sm">
         <strong>Reading the result honestly:</strong> pandas was faster at {pandasWins} of {total} sizes tested. Spark has
         a fixed start-up cost per job, which dominates on small files. Spark is built for data too large for one
         machine, which this laptop test does not cover. These numbers do not show that Spark is faster.
@@ -169,7 +169,7 @@ function Benchmark() {
         <p className="mt-2 text-xs text-slate-500">
           {Object.entries(rep.machine).map(([k, v]) => `${k}: ${v}`).join(" · ")}
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-navy-900 p-3 text-xs text-sky-100">{rep.spark_sql}</pre>
+        <pre className="mt-2 overflow-x-auto rounded-lg bg-navy-900 p-3 text-xs text-accent-100">{rep.spark_sql}</pre>
       </details>
     </Card>
   );
