@@ -1,165 +1,200 @@
-import { useCallback, useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { CartesianGrid, LabelList, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { ArrowRight, Lightbulb } from "lucide-react";
 import { ApiError, get } from "../api";
-import type { Dataset, QueryResult } from "../api";
-import { axis, tip } from "../chartStyle";
-import { ChartBox, ScoreNotice } from "../components";
-import { Card, Skeleton } from "../ui";
+import type { QueryResult } from "../api";
+import { ChartBox, ScoreBanner, axisProps } from "../components";
+import { useDataset } from "../context";
+import { COMPLAINT_SEARCH } from "../insights";
+import { cx, fmtPct, plural, ratingColor } from "../lib";
+import type { AirlineRow, DashboardData } from "../types";
+import { EmptyState, ErrorState, Panel, Pill, Rise, Segmented, Skeleton } from "../ui";
 
-type Total = { airline: string; total_reviews: number };
-type Avg = { airline: string; avg_rating: number | null; rated_reviews: number };
-type Low = { airline: string; rated_reviews: number; low_rated: number; low_rating_pct: number };
-type Neg = { airline: string; scored_reviews: number; negative: number; negative_pct: number };
-type Complaint = { category: string; mentions: number };
-interface Data {
-  ds: Dataset; totals: Total[]; avg: Avg[]; low: Low[]; complaints: Complaint[]; neg: Neg[] | null;
+type SortKey = "reviews" | "rating" | "negative";
+interface Cell { airline: string; category: string; mentions: number }
+interface Point { airline: string; x: number; y: number; z: number }
+
+function ScatterTip({ active, payload }: { active?: boolean; payload?: { payload: Point }[] }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-xl border border-line bg-panel px-3 py-2 text-xs shadow-xl">
+      <p className="font-display font-semibold">{p.airline}</p>
+      <p className="mt-1 text-muted">Average rating: <span className="font-medium text-ink">{p.x.toFixed(2)}</span></p>
+      <p className="text-muted">Negative share: <span className="font-medium text-ink">{p.y.toFixed(1)}%</span></p>
+      <p className="text-muted">Reviews: <span className="font-medium text-ink">{p.z}</span></p>
+    </div>
+  );
 }
 
-const q = <R,>(name: string) => get<QueryResult<R>>("/api/spark/" + name);
-const pct = (v: number | null) => (v === null ? "n/a" : v.toFixed(1) + "%");
-
-async function loadAll(): Promise<Data> {
-  const [ds, totals, avg, low, complaints] = await Promise.all([
-    get<Dataset>("/api/dataset"), q<Total>("reviews_by_airline"), q<Avg>("avg_rating_by_airline"),
-    q<Low>("low_rating_share_by_airline"), q<Complaint>("complaint_categories"),
-  ]);
-  const neg = ds.sentiment ? (await q<Neg>("negative_share_by_airline")).rows : null;
-  return { ds, totals: totals.rows, avg: avg.rows, low: low.rows, complaints: complaints.rows, neg };
+function Bar({ value, max, color, delay = 0 }: { value: number | null; max: number; color: string; delay?: number }) {
+  return (
+    <div className="h-2 overflow-hidden rounded-full bg-raised">
+      {value != null && <div className="grow-x h-full rounded-full" style={{ width: `${Math.min(100, (value / max) * 100)}%`, background: color, animationDelay: `${delay}ms` }} />}
+    </div>
+  );
 }
 
 export default function Compare() {
-  const [data, setData] = useState<Data | null>(null);
+  const { version } = useDataset();
+  const [d, setD] = useState<DashboardData | null>(null);
+  const [cells, setCells] = useState<Cell[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortKey>("reviews");
+  const [retry, setRetry] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setData(await loadAll());
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong while loading data.");
-    }
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([get<DashboardData>("/api/dashboard"), get<QueryResult<Cell>>("/api/spark/complaints_by_airline")])
+      .then(([dash, c]) => { if (!cancelled) { setD(dash); setCells(c.rows); setError(null); } })
+      .catch((e) => { if (!cancelled) setError(e instanceof ApiError ? e.message : "Could not load the comparison."); });
+    return () => { cancelled = true; };
+  }, [version, retry]);
 
-  if (error) {
-    return (
-      <Card>
-        <p role="alert" className="font-medium text-rose-500">Could not load data</p>
-        <p className="mt-1 text-sm">{error}</p>
-        <button onClick={load} className="mt-4 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white">Try again</button>
-      </Card>
-    );
-  }
-  if (!data) {
-    return <div aria-busy="true" className="grid gap-4 lg:grid-cols-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-72" />)}</div>;
-  }
+  const rows = useMemo(() => {
+    if (!d) return [];
+    const key = (a: AirlineRow) =>
+      sort === "reviews" ? a.reviews : sort === "rating" ? (a.avg_rating ?? -1) : (a.negative_pct ?? -1);
+    return [...d.airlines].sort((a, b) => key(b) - key(a));
+  }, [d, sort]);
 
-  const { ds, totals, avg, low, complaints, neg } = data;
-  const rows = totals.map((t) => ({
-    airline: t.airline,
-    total: t.total_reviews,
-    avg: avg.find((a) => a.airline === t.airline)?.avg_rating ?? null,
-    low: low.find((a) => a.airline === t.airline)?.low_rating_pct ?? null,
-    neg: neg?.find((a) => a.airline === t.airline)?.negative_pct ?? null,
-  }));
-  const th = "px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400";
-  const td = "px-3 py-2 text-sm";
+  if (error && !d) return <ErrorState message={error} onRetry={() => setRetry((r) => r + 1)} />;
+  if (!d) return <div aria-busy="true" className="space-y-4"><Skeleton className="h-96" /><div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-80" /><Skeleton className="h-80" /></div></div>;
+  if (d.airlines.length === 0) return <Panel><EmptyState title="No airlines to compare" text="Upload a CSV with airline names to see this page." /></Panel>;
+
+  const cats = Array.from(new Set(cells.map((c) => c.category)));
+  const airlines = d.airlines.map((a) => a.airline);
+  const maxCell = Math.max(1, ...cells.map((c) => c.mentions));
+  const lookup = new Map(cells.map((c) => [`${c.airline}|${c.category}`, c.mentions]));
+  const points: Point[] = d.airlines.flatMap((a) =>
+    a.avg_rating != null && a.negative_pct != null ? [{ airline: a.airline, x: a.avg_rating, y: a.negative_pct, z: a.reviews }] : []);
+  const th = "px-3 py-2 text-left text-xs font-medium text-muted";
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Airline comparison</h1>
-      <p className="text-sm text-slate-500 dark:text-slate-400">{ds.source}</p>
-      {!ds.sentiment && <ScoreNotice onDone={load} />}
+    <div className="space-y-5">
+      {!d.scored && <ScoreBanner compact />}
 
-      <Card title="Airlines side by side">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th className={th}>Airline</th><th className={th}>Reviews</th><th className={th}>Avg rating</th>
-                <th className={th}>Rated ≤ 4</th><th className={th}>Negative sentiment</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.airline} className="border-t border-slate-200 dark:border-white/10">
-                  <td className={`${td} font-medium`}>{r.airline}</td>
-                  <td className={td}>{r.total}</td>
-                  <td className={td}>{r.avg === null ? "n/a" : r.avg.toFixed(2)}</td>
-                  <td className={td} title={r.low === null ? "Too few rated reviews" : undefined}>{pct(r.low)}</td>
-                  <td className={td} title={r.neg === null ? "Not scored, or too few reviews" : undefined}>{pct(r.neg)}</td>
+      <Rise i={0}>
+        <Panel
+          title="Leaderboard"
+          subtitle={`Airlines with fewer than ${d.min_sample} rated reviews are flagged: their percentages swing wildly on a handful of reviews.`}
+          action={<Segmented<SortKey> label="Sort airlines by" value={sort} onChange={setSort} options={[{ value: "reviews", label: "Reviews" }, { value: "rating", label: "Rating" }, { value: "negative", label: "Negative share" }]} />}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead>
+                <tr>
+                  <th className={cx(th, "w-10")}>#</th><th className={th}>Airline</th><th className={th}>Reviews</th>
+                  <th className={cx(th, "w-[22%]")}>Average rating</th><th className={cx(th, "w-[22%]")}>Rated 4 or below</th><th className={cx(th, "w-[22%]")}>Negative sentiment</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((a, i) => (
+                  <tr key={a.airline} className="border-t border-line transition-colors hover:bg-raised/60">
+                    <td className="px-3 py-3.5 font-display text-faint">{i + 1}</td>
+                    <td className="px-3 py-3.5">
+                      <Link to={`/explorer?airline=${encodeURIComponent(a.airline)}`} className="font-semibold hover:text-accent">{a.airline}</Link>
+                      {a.rated_reviews < d.min_sample && <span className="ml-2"><Pill tone="warn" title={`Fewer than ${d.min_sample} rated reviews`}>small sample</Pill></span>}
+                    </td>
+                    <td className="px-3 py-3.5 text-muted">{a.reviews}</td>
+                    <td className="px-3 py-3.5">
+                      <div className="mb-1 font-display font-semibold">{a.avg_rating == null ? "n/a" : a.avg_rating.toFixed(2)}</div>
+                      <Bar value={a.avg_rating} max={10} color={ratingColor(a.avg_rating ?? 0)} delay={i * 70} />
+                    </td>
+                    <td className="px-3 py-3.5">
+                      <div className="mb-1 font-medium">{fmtPct(a.low_rating_pct)}</div>
+                      <Bar value={a.low_rating_pct ?? null} max={100} color="#FFB02E" delay={i * 70} />
+                    </td>
+                    <td className="px-3 py-3.5">
+                      <div className="mb-1 font-medium">{d.scored ? fmtPct(a.negative_pct) : "not scored"}</div>
+                      <Bar value={d.scored ? (a.negative_pct ?? null) : null} max={100} color="#FF6B81" delay={i * 70} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </Rise>
+
+      <Rise i={1}>
+        <div className="grid gap-5 lg:grid-cols-2">
+          <Panel title="Rating against negativity" subtitle="Each bubble is an airline; bigger means more reviews. Bottom right is the happy corner.">
+            {points.length < 2 ? (
+              <EmptyState title="Needs scored reviews" text="Score the reviews, with at least two airlines, to see this chart." />
+            ) : (
+              <ChartBox height={300}>
+                <ScatterChart margin={{ top: 16, right: 24, left: -8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} />
+                  <XAxis type="number" dataKey="x" name="Average rating" domain={[0, 10]} {...axisProps} label={{ value: "Average rating", position: "insideBottom", offset: -2, fill: "currentColor", fontSize: 11 }} />
+                  <YAxis type="number" dataKey="y" name="Negative share" domain={[0, 100]} unit="%" {...axisProps} />
+                  <ZAxis type="number" dataKey="z" range={[110, 520]} />
+                  <Tooltip content={<ScatterTip />} cursor={{ strokeDasharray: "3 3", stroke: "currentColor", strokeOpacity: 0.3 }} />
+                  <Scatter data={points} fill="#4FE3C1" fillOpacity={0.75} stroke="#4FE3C1">
+                    <LabelList dataKey="airline" position="top" style={{ fill: "currentColor", fontSize: 11 }} />
+                  </Scatter>
+                </ScatterChart>
+              </ChartBox>
+            )}
+          </Panel>
+
+          <Panel title="Complaint heatmap" subtitle="Mentions of each theme in reviews rated 4 or below, by airline. Keyword matching, so it misses synonyms.">
+            {cats.length === 0 ? <EmptyState title="No data" text="No low-rated reviews to analyse." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] border-separate border-spacing-1 text-xs">
+                  <thead>
+                    <tr><th />{cats.map((c) => <th key={c} className="px-1 pb-1 text-center font-medium text-muted">{c}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {airlines.map((a, ai) => (
+                      <tr key={a}>
+                        <th className="whitespace-nowrap pr-2 text-right font-medium text-ink">{a}</th>
+                        {cats.map((c, ci) => {
+                          const m = lookup.get(`${a}|${c}`) ?? 0;
+                          const t = m / maxCell;
+                          return (
+                            <td key={c} className="p-0">
+                              <Link
+                                to={`/explorer?airline=${encodeURIComponent(a)}&search=${encodeURIComponent(COMPLAINT_SEARCH[c] ?? c)}&max=4`}
+                                title={`${a}: ${plural(m, "mention")} of ${c}`}
+                                className="cell-in grid h-11 place-items-center rounded-md font-display text-sm font-semibold transition hover:scale-105 hover:ring-2 hover:ring-accent"
+                                style={{ animationDelay: `${(ai * cats.length + ci) * 45}ms`, background: m ? `rgba(255,107,129,${0.14 + t * 0.62})` : undefined, color: m ? undefined : "rgb(var(--faint))" }}
+                              >
+                                {m}
+                              </Link>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
         </div>
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          “n/a” means no value, or too few reviews to compare fairly. Percentages from very small samples are misleading,
-          so airlines below the minimum sample size (set by MIN_AIRLINE_SAMPLE on the backend; 3 for the demo file, use
-          30 or more with real data) are left out.
-        </p>
-      </Card>
+      </Rise>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Average rating (out of 10)">
-          <ChartBox>
-            <BarChart data={rows.filter((r) => r.avg !== null)}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
-              <XAxis dataKey="airline" {...axis} />
-              <YAxis domain={[0, 10]} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-              <Bar dataKey="avg" name="Avg rating" fill="#2BB5A6" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ChartBox>
-        </Card>
-        <Card title="Share of reviews rated 4 or below (%)">
-          <ChartBox>
-            <BarChart data={rows.filter((r) => r.low !== null)}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
-              <XAxis dataKey="airline" {...axis} />
-              <YAxis domain={[0, 100]} unit="%" {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-              <Bar dataKey="low" name="Rated ≤ 4 (%)" fill="#F5A524" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ChartBox>
-        </Card>
-        <Card title="Share of negative-sentiment reviews (%)">
-          {neg ? (
-            <ChartBox>
-              <BarChart data={rows.filter((r) => r.neg !== null)}>
-                <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
-                <XAxis dataKey="airline" {...axis} />
-                <YAxis domain={[0, 100]} unit="%" {...axis} />
-                <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-                <Bar dataKey="neg" name="Negative (%)" fill="#F4617F" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ChartBox>
-          ) : <p className="text-sm text-slate-500">Available after scoring.</p>}
-        </Card>
-        <Card title="Complaint themes in low-rated reviews">
-          <ChartBox>
-            <BarChart data={complaints} layout="vertical" margin={{ left: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} />
-              <XAxis type="number" allowDecimals={false} {...axis} />
-              <YAxis type="category" dataKey="category" width={110} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-              <Bar dataKey="mentions" name="Mentions" fill="#8B9BFF" radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ChartBox>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Found by keyword matching in reviews rated 4 or below. A review can count in several themes.
-          </p>
-        </Card>
-      </div>
-
-      <Card title="How management could use this">
-        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">
-          <li>Compare average rating and negative share to see which airlines passengers are happiest or unhappiest with.</li>
-          <li>Treat a high negative share as a prompt to read that airline’s reviews, not as proof of a problem.</li>
-          <li>Use the complaint themes to decide which area (delays, baggage, service, seating…) to investigate first.</li>
-          <li>Check the review counts before drawing conclusions. Small samples can mislead.</li>
-        </ul>
-      </Card>
+      <Rise i={2}>
+        <Panel title="How management could use this">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              ["Find who to learn from", "Airlines with high ratings and low negative share show what passengers value. Check how many reviews back it."],
+              ["Treat negative share as a prompt", "A high share means read the reviews, not that something is proven wrong. Use the heatmap to see where to look."],
+              ["Prioritise by theme", "The darkest heatmap cells show which operational area (delays, baggage, service) draws the most complaints for each airline."],
+              ["Respect sample size", "Small-sample flags exist for a reason. Revisit the ranking when more reviews arrive."],
+            ].map(([t, b]) => (
+              <div key={t} className="rounded-xl border border-line bg-raised/60 p-4">
+                <Lightbulb size={16} className="text-accent" aria-hidden />
+                <p className="mt-2 font-display text-sm font-semibold">{t}</p>
+                <p className="mt-1 text-sm text-muted">{b}</p>
+              </div>
+            ))}
+          </div>
+          <Link to="/explorer" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-accent hover:underline">Open the Review Explorer <ArrowRight size={14} aria-hidden /></Link>
+        </Panel>
+      </Rise>
     </div>
   );
 }

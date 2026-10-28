@@ -1,262 +1,365 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { ApiError, get, post } from "../api";
-import type { Dataset, QueryResult } from "../api";
-import { axis, tip } from "../chartStyle";
-import { ChartBox } from "../components";
-import { Card, Kpi, Skeleton } from "../ui";
+import { AlertCircle, ArrowRight, CheckCircle2, Info, Loader2, RotateCcw, SlidersHorizontal, TrendingDown, Zap } from "lucide-react";
+import { ApiError, get } from "../api";
+import { ChartBox, ChartTip, CountUp, ScoreBanner, Sparkline, axisProps } from "../components";
+import { useDataset } from "../context";
+import Hero from "../Hero";
+import { buildInsights } from "../insights";
+import type { Insight } from "../insights";
+import { SENT_COLOR, cx, monthLabel, plural, ratingColor } from "../lib";
+import type { DashboardData, Sentiment } from "../types";
+import { Button, EmptyState, ErrorState, Field, Panel, Pill, Rise, Segmented, Skeleton, inputCls } from "../ui";
 
-type Airline = { airline: string; total_reviews: number };
-type Avg = { airline: string; avg_rating: number | null; rated_reviews: number };
-type Dist = { rating: number; reviews: number };
-type Sent = { sentiment: "positive" | "neutral" | "negative"; reviews: number; pct: number };
-type Trend = { month: string; reviews: number; negative: number; negative_pct: number };
-interface Data {
-  ds: Dataset; airlines: Airline[]; avg: Avg[]; dist: Dist[]; sent: Sent[] | null; trend: Trend[] | null;
+interface Filters { airline: string; sentiment: "" | Sentiment; min: string; max: string; from: string; to: string }
+const NONE: Filters = { airline: "", sentiment: "", min: "", max: "", from: "", to: "" };
+const RATINGS = Array.from({ length: 10 }, (_, i) => String(i + 1));
+
+function toParams(f: Filters): string {
+  const p = new URLSearchParams();
+  if (f.airline) p.set("airline", f.airline);
+  if (f.sentiment) p.set("sentiment", f.sentiment);
+  if (f.min) p.set("min_rating", f.min);
+  if (f.max) p.set("max_rating", f.max);
+  if (f.from) p.set("date_from", f.from);
+  if (f.to) p.set("date_to", f.to);
+  return p.toString();
 }
 
-const COLORS = { positive: "#10B981", neutral: "#94A3B8", negative: "#F4617F" };
-const q = <R,>(name: string) => get<QueryResult<R>>("/api/spark/" + name);
-
-async function loadAll(): Promise<Data> {
-  const [ds, airlines, avg, dist] = await Promise.all([
-    get<Dataset>("/api/dataset"), q<Airline>("reviews_by_airline"),
-    q<Avg>("avg_rating_by_airline"), q<Dist>("rating_distribution"),
-  ]);
-  let sent: Sent[] | null = null;
-  let trend: Trend[] | null = null;
-  if (ds.sentiment) {
-    const [s, t] = await Promise.all([q<Sent>("sentiment_counts"), q<Trend>("negative_trend_monthly")]);
-    sent = s.rows;
-    trend = t.rows;
-  }
-  return { ds, airlines: airlines.rows, avg: avg.rows, dist: dist.rows, sent, trend };
-}
-
-function Hero({ headline, sub, chip }: { headline: string; sub: string; chip: string }) {
-  const [still] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
-  const plane = "M14 0 L-7 -8 L-3 0 L-7 8 Z";
+function KpiCell({ label, hint, children, spark, sparkColor }: {
+  label: string; hint?: string; children: React.ReactNode; spark?: number[]; sparkColor?: string;
+}) {
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0B1226] text-white">
-      <div
-        aria-hidden
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(900px 260px at 85% 125%, rgba(245,165,36,.30), transparent 60%), radial-gradient(700px 300px at 8% -25%, rgba(51,197,178,.18), transparent 60%)",
-        }}
-      />
-      <svg aria-hidden viewBox="0 0 800 220" preserveAspectRatio="xMaxYMid slice" className="absolute inset-0 h-full w-full">
-        <defs>
-          <linearGradient id="trail" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0" stopColor="#33C5B2" stopOpacity="0" />
-            <stop offset="0.55" stopColor="#33C5B2" />
-            <stop offset="1" stopColor="#F5A524" />
-          </linearGradient>
-        </defs>
-        {[0, 1, 2].map((i) => (
-          <ellipse key={i} cx="640" cy="270" rx={190 + i * 120} ry={110 + i * 62} fill="none" stroke="#fff" strokeOpacity="0.06" />
-        ))}
-        <path
-          id="route"
-          d="M 330 205 C 470 205 560 45 780 48"
-          pathLength={1}
-          fill="none"
-          stroke="url(#trail)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          className={still ? "" : "route-draw"}
-        />
-        <circle cx="330" cy="205" r="4" fill="#33C5B2" />
-        <circle cx="780" cy="48" r="4" fill="#F5A524" />
-        {still ? (
-          <g transform="translate(780 48) rotate(1)"><path d={plane} fill="#fff" /></g>
-        ) : (
-          <g>
-            <path d={plane} fill="#fff" />
-            <animateMotion dur="3.4s" begin="0.2s" fill="freeze" rotate="auto" calcMode="spline" keyTimes="0;1" keySplines="0.4 0 0.2 1">
-              <mpath href="#route" />
-            </animateMotion>
-          </g>
-        )}
-      </svg>
-      <div className="relative max-w-xl px-6 py-10 sm:px-10 sm:py-14">
-        <h2 className="font-display text-3xl font-semibold leading-tight sm:text-4xl">{headline}</h2>
-        <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-300">{sub}</p>
-        <p className="mt-5 inline-block rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300">{chip}</p>
+    <div className="flex flex-col justify-between bg-panel p-5 transition-colors duration-300 hover:bg-raised">
+      <div>
+        <p className="text-xs font-medium text-muted">{label}</p>
+        <p className="mt-2 font-display text-[1.9rem] font-semibold leading-none tracking-tight">{children}</p>
+        {hint && <p className="mt-1.5 text-xs text-faint">{hint}</p>}
       </div>
-    </section>
+      {spark && <div className="mt-4"><Sparkline values={spark} color={sparkColor} /></div>}
+    </div>
+  );
+}
+
+const TONE_ICON = { negative: TrendingDown, positive: CheckCircle2, info: Info, warn: AlertCircle } as const;
+const TONE_CLS = {
+  negative: "text-neg bg-neg/15", positive: "text-pos bg-pos/15", info: "text-accent bg-accent/15", warn: "text-warn bg-warn/15",
+} as const;
+
+function InsightCard({ i }: { i: Insight }) {
+  const Icon = TONE_ICON[i.tone];
+  return (
+    <div className="flex h-full flex-col rounded-xl border border-line bg-raised/60 p-4 transition duration-300 hover:-translate-y-1 hover:border-accent/40 hover:shadow-lg">
+      <span className={cx("grid h-8 w-8 place-items-center rounded-lg", TONE_CLS[i.tone])}><Icon size={16} aria-hidden /></span>
+      <p className="mt-3 font-display text-sm font-semibold leading-snug">{i.title}</p>
+      <p className="mt-1 text-sm text-muted">{i.body}</p>
+      <p className="mt-2 text-xs leading-relaxed text-muted"><span className="font-semibold text-ink">What to do: </span>{i.action}</p>
+      {i.to && (
+        <Link to={i.to} className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-semibold text-accent hover:underline">
+          {i.cta} <ArrowRight size={12} aria-hidden />
+        </Link>
+      )}
+    </div>
   );
 }
 
 export default function Overview() {
-  const [data, setData] = useState<Data | null>(null);
+  const { ds, version, demo, scoring, score } = useDataset();
+  const [f, setF] = useState<Filters>(NONE);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [scoring, setScoring] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  const [showFilters, setShowFilters] = useState(false);
+  const params = useMemo(() => toParams(f), [f]);
+  const active = Object.values(f).filter(Boolean).length;
+  const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setF((o) => ({ ...o, [k]: v }));
 
-  const refresh = useCallback(async () => {
-    setError(null);
-    try {
-      setData(await loadAll());
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong while loading data.");
-    }
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    get<DashboardData>("/api/dashboard" + (params ? "?" + params : ""))
+      .then((d) => { if (!cancelled) { setData(d); setError(null); } })
+      .catch((e) => { if (!cancelled) setError(e instanceof ApiError ? e.message : "Something went wrong while loading data."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [params, version, retry]);
 
-  useEffect(() => { refresh(); }, [refresh]);
-
-  async function score() {
-    setScoring(true);
-    setError(null);
-    try {
-      await post("/api/sentiment/score");
-      await refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Scoring failed.");
-    } finally {
-      setScoring(false);
-    }
-  }
-
-  if (error && !data) {
-    return (
-      <Card>
-        <p role="alert" className="font-medium text-rose-500">Could not load data</p>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{error}</p>
-        <button onClick={refresh} className="mt-4 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-700">
-          Try again
-        </button>
-      </Card>
-    );
-  }
+  if (error && !data) return <ErrorState message={error} onRetry={() => setRetry((r) => r + 1)} />;
 
   if (!data) {
     return (
       <div aria-busy="true" className="space-y-4">
-        <Skeleton className="h-56" />
-        <Skeleton className="h-28" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-80" />)}
-        </div>
+        <Skeleton className="h-16" />
+        <Skeleton className="h-[19rem] !rounded-3xl" />
+        <Skeleton className="h-32" />
+        <div className="grid gap-4 lg:grid-cols-3"><Skeleton className="h-80" /><Skeleton className="h-80 lg:col-span-2" /></div>
       </div>
     );
   }
 
-  const { ds, airlines, avg, dist, sent, trend } = data;
-  const cr = ds.cleaning_report;
-  if (cr.rows_kept === 0) {
-    return <Card><p className="text-sm">The dataset has no usable reviews after cleaning. Check the file and upload it again.</p></Card>;
-  }
+  const d = data;
+  const k = d.kpis;
+  const cr = ds?.cleaning_report;
+  const count = (s: Sentiment) => d.sentiment.find((x) => x.sentiment === s);
+  const neg = count("negative");
+  const isDemoData = ds?.source.startsWith("Demo");
+  const insights = buildInsights(d);
+  const monthRows = d.monthly.map((m) => ({
+    label: monthLabel(m.month), reviews: m.reviews,
+    metric: d.scored ? (m.negative_pct ?? null) : (m.avg_rating ?? null),
+  }));
+  const dist = RATINGS.map((r) => ({ rating: r, reviews: d.rating_distribution.find((x) => String(x.rating) === r)?.reviews ?? 0 }));
+  const maxMention = Math.max(1, ...d.complaints.map((c) => c.mentions));
+  const topAirlines = d.airlines.slice(0, 5);
 
-  const ratedTotal = avg.reduce((s, r) => s + r.rated_reviews, 0);
-  const avgRating = ratedTotal ? avg.reduce((s, r) => s + (r.avg_rating ?? 0) * r.rated_reviews, 0) / ratedTotal : null;
-  const pct = (label: Sent["sentiment"]) => {
-    const row = sent?.find((s) => s.sentiment === label);
-    return sent ? `${(row?.pct ?? 0).toFixed(1)}%` : "n/a";
-  };
-  const negPct = sent?.find((s) => s.sentiment === "negative")?.pct ?? 0;
-  const unscored = "Score reviews to see this";
-  const isDemo = ds.source.startsWith("Demo");
+  const headline = k.reviews === 0
+    ? <>No reviews match these filters</>
+    : d.scored
+      ? <><CountUp value={neg?.pct ?? 0} decimals={0} suffix="%" /> of {k.reviews.toLocaleString("en-US")} reviews read as negative</>
+      : <>{k.reviews.toLocaleString("en-US")} reviews cleaned and ready to score</>;
+  const sub = k.reviews === 0
+    ? "Loosen a filter above to see results again."
+    : d.scored
+      ? "Spark SQL did the counting and a transformer model read each review. Confidence is not the same as accuracy."
+      : "Spark SQL has cleaned and counted the data. Score the reviews to see how passengers felt.";
 
   return (
-    <div className="space-y-4">
-      <Hero
-        headline={sent ? `${negPct.toFixed(0)}% of ${cr.rows_kept} reviews read as negative` : `${cr.rows_kept} reviews cleaned and ready to score`}
-        sub={
-          sent
-            ? "Spark SQL counted them and a transformer model read each review. Confidence is not the same as accuracy."
-            : "Spark SQL has cleaned the data. Score the reviews to see how passengers felt."
-        }
-        chip={isDemo ? "Invented demo data, not real airlines" : ds.source}
-      />
+    <div className="space-y-5">
+      <div className={cx("space-y-5 transition-opacity duration-200", loading && "opacity-60")}>
+        <Rise i={0}>
+          <Hero
+            headline={headline}
+            sub={sub}
+            chip={isDemoData ? "Invented demo data, not real airlines" : (ds?.source ?? "Dataset")}
+            routes={d.airlines.map((a) => ({ name: a.airline, rating: a.avg_rating }))}
+            action={!d.scored && !demo && k.reviews > 0 ? (
+              <Button variant="primary" onClick={score} disabled={scoring}>
+                {scoring ? <><Loader2 size={15} className="animate-spin" aria-hidden /> Scoring…</> : "Score reviews with the transformer"}
+              </Button>
+            ) : undefined}
+          />
+        </Rise>
 
-      {error && <p role="alert" className="rounded-xl bg-rose-500/10 p-3 text-sm text-rose-500">{error}</p>}
+        {!d.scored && <ScoreBanner />}
 
-      {!sent && (
-        <Card>
-          <p className="text-sm font-medium text-slate-900 dark:text-white">Sentiment has not been calculated yet</p>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            The transformer model scores every review. The first run downloads the model (about 500 MB) and can
-            take several minutes. Later runs are fast.
-          </p>
+        <Rise i={2}>
+        <Panel bodyClass="!p-4">
+          {demo ? (
+            <p className="flex items-center gap-2 text-sm text-muted"><Zap size={14} className="text-accent" aria-hidden /> Filters run Spark SQL on the live server, so they are off in this saved snapshot.</p>
+          ) : (
+          <>
           <button
-            onClick={score}
-            disabled={scoring}
-            className="mt-3 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-700 disabled:opacity-60"
+            onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}
+            className="mb-1 flex w-full items-center justify-between rounded-lg border border-line bg-raised px-3 py-2 text-sm font-medium sm:hidden"
           >
-            {scoring ? "Scoring reviews…" : "Score reviews with the transformer"}
+            <span className="flex items-center gap-2"><SlidersHorizontal size={15} aria-hidden /> Filters{active ? ` (${active} active)` : ""}</span>
+            <span className="text-xs text-muted">{showFilters ? "Hide" : "Show"}</span>
           </button>
-        </Card>
-      )}
+          <div className={cx("flex-wrap items-end gap-3 max-sm:mt-3", showFilters ? "flex" : "hidden sm:flex")}>
+            <Field label="Airline" htmlFor="o-airline" className="w-40">
+              <select id="o-airline" className={inputCls} value={f.airline} onChange={(e) => set("airline", e.target.value)}>
+                <option value="">All airlines</option>
+                {d.options.airlines.map((a) => <option key={a}>{a}</option>)}
+              </select>
+            </Field>
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted">Sentiment</p>
+              <Segmented
+                label="Sentiment filter" value={f.sentiment} disabled={!ds?.sentiment}
+                onChange={(v) => set("sentiment", v)}
+                options={[{ value: "", label: "All" }, { value: "positive", label: "Positive" }, { value: "neutral", label: "Neutral" }, { value: "negative", label: "Negative" }]}
+              />
+            </div>
+            <Field label="Min rating" htmlFor="o-min" className="w-24">
+              <select id="o-min" className={inputCls} value={f.min} onChange={(e) => set("min", e.target.value)}>
+                <option value="">Any</option>{RATINGS.map((r) => <option key={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Max rating" htmlFor="o-max" className="w-24">
+              <select id="o-max" className={inputCls} value={f.max} onChange={(e) => set("max", e.target.value)}>
+                <option value="">Any</option>{RATINGS.map((r) => <option key={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="From" htmlFor="o-from" className="w-40">
+              <input id="o-from" type="date" className={inputCls} value={f.from} min={d.options.date_min ?? undefined} max={d.options.date_max ?? undefined} onChange={(e) => set("from", e.target.value)} />
+            </Field>
+            <Field label="To" htmlFor="o-to" className="w-40">
+              <input id="o-to" type="date" className={inputCls} value={f.to} min={d.options.date_min ?? undefined} max={d.options.date_max ?? undefined} onChange={(e) => set("to", e.target.value)} />
+            </Field>
+            <Button variant="quiet" onClick={() => setF(NONE)} disabled={!active}><RotateCcw size={14} aria-hidden /> Reset{active ? ` (${active})` : ""}</Button>
+            <div className="ml-auto flex items-center gap-2 pb-1 text-xs text-muted">
+              {loading ? <Loader2 size={14} className="animate-spin text-accent" aria-label="Updating" /> : <Zap size={14} className="text-accent" aria-hidden />}
+              <span title={d.cached ? "Spark computed this earlier for the same filters; it is reused until the data changes." : undefined}>{d.cached ? "Spark SQL · cached result" : `Spark SQL · ${d.elapsed_ms} ms`}</span>
+            </div>
+          </div>
+          </>
+          )}
+          {error && <p role="alert" className="mt-3 text-sm text-neg">{error}</p>}
+        </Panel>
+      </Rise>
 
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 lg:grid-cols-3 xl:grid-cols-6 dark:border-white/[0.07] dark:bg-white/[0.07]">
-        <Kpi label="Reviews" value={String(cr.rows_kept)} />
-        <Kpi label="Airlines" value={String(airlines.length)} />
-        <Kpi label="Average rating" value={avgRating === null ? "n/a" : avgRating.toFixed(2)} hint="Out of 10" />
-        <Kpi label="Positive" value={pct("positive")} accent="text-emerald-600 dark:text-emerald-400" hint={sent ? undefined : unscored} />
-        <Kpi label="Neutral" value={pct("neutral")} accent="text-slate-500 dark:text-slate-300" hint={sent ? undefined : unscored} />
-        <Kpi label="Negative" value={pct("negative")} accent="text-rose-600 dark:text-rose-400" hint={sent ? undefined : unscored} />
-      </div>
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        Cleaning: {cr.rows_in} rows read, {cr.rows_kept} kept, {cr.rows_removed} removed (empty or duplicate),{" "}
-        {cr.invalid_ratings_nulled} invalid ratings ignored.
-      </p>
+        <Rise i={2}>
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-panel lg:grid-cols-3 xl:grid-cols-6">
+            <KpiCell label="Reviews" hint={cr && cr.rows_removed && !active ? `${cr.rows_removed} removed in cleaning` : undefined} spark={d.monthly.map((m) => m.reviews)}>
+              <CountUp value={k.reviews} />
+            </KpiCell>
+            <KpiCell label="Airlines" hint="With at least one review"><CountUp value={k.airlines} /></KpiCell>
+            <KpiCell label="Average rating" hint={`Out of 10 · ${k.rated_reviews} rated`} spark={d.monthly.flatMap((m) => (m.avg_rating == null ? [] : [m.avg_rating]))} sparkColor="#FFB02E">
+              {k.avg_rating == null ? "n/a" : <CountUp value={k.avg_rating} decimals={2} />}
+            </KpiCell>
+            <KpiCell label="Positive" hint={d.scored ? plural(count("positive")?.reviews ?? 0, "review") : "Not scored yet"}>
+              <span className="text-pos">{d.scored ? <CountUp value={count("positive")?.pct ?? 0} decimals={1} suffix="%" /> : "n/a"}</span>
+            </KpiCell>
+            <KpiCell label="Neutral" hint={d.scored ? plural(count("neutral")?.reviews ?? 0, "review") : "Not scored yet"}>
+              <span className="text-neu">{d.scored ? <CountUp value={count("neutral")?.pct ?? 0} decimals={1} suffix="%" /> : "n/a"}</span>
+            </KpiCell>
+            <KpiCell label="Negative" hint={d.scored ? plural(neg?.reviews ?? 0, "review") : "Not scored yet"} spark={d.scored ? d.monthly.flatMap((m) => (m.negative_pct == null ? [] : [m.negative_pct])) : undefined} sparkColor="#FF6B81">
+              <span className="text-neg">{d.scored ? <CountUp value={neg?.pct ?? 0} decimals={1} suffix="%" /> : "n/a"}</span>
+            </KpiCell>
+          </div>
+        </Rise>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Sentiment distribution">
-          {sent ? (
-            <ChartBox>
-              <PieChart>
-                <Pie data={sent} dataKey="reviews" nameKey="sentiment" innerRadius={58} outerRadius={92} paddingAngle={3} stroke="none">
-                  {sent.map((s) => <Cell key={s.sentiment} fill={COLORS[s.sentiment]} />)}
-                </Pie>
-                <Tooltip {...tip} />
-              </PieChart>
-            </ChartBox>
-          ) : <p className="text-sm text-slate-500">Available after scoring.</p>}
-        </Card>
+        {insights.length > 0 && (
+          <Rise i={3}>
+            <Panel title="What stands out" subtitle="Written from the numbers on this page. Read the caveats: small samples can mislead.">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {insights.map((i) => <InsightCard key={i.title} i={i} />)}
+              </div>
+            </Panel>
+          </Rise>
+        )}
 
-        <Card title="Reviews per airline">
-          <ChartBox>
-            <BarChart data={airlines}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} vertical={false} />
-              <XAxis dataKey="airline" {...axis} />
-              <YAxis allowDecimals={false} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-              <Bar dataKey="total_reviews" name="Reviews" fill="#2BB5A6" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ChartBox>
-        </Card>
+        {k.reviews === 0 ? (
+          <Panel><EmptyState title="Nothing to chart" text="No reviews match the current filters." action={<Button onClick={() => setF(NONE)}>Reset filters</Button>} /></Panel>
+        ) : (
+          <>
+            <Rise i={4}>
+              <div className="grid gap-5 lg:grid-cols-3">
+                <Panel title="Sentiment mix" subtitle="Share of reviews the model read as positive, neutral or negative">
+                  {d.scored ? (
+                    <>
+                      <div className="relative">
+                        <ChartBox height={210}>
+                          <PieChart>
+                            <Pie data={d.sentiment} dataKey="reviews" nameKey="sentiment" innerRadius={64} outerRadius={92} paddingAngle={3} stroke="none" cornerRadius={4}>
+                              {d.sentiment.map((s) => <Cell key={s.sentiment} fill={SENT_COLOR[s.sentiment]} />)}
+                            </Pie>
+                            <Tooltip content={<ChartTip />} />
+                          </PieChart>
+                        </ChartBox>
+                        <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                          <div>
+                            <p className="font-display text-3xl font-semibold leading-none">{k.reviews}</p>
+                            <p className="mt-1 text-xs text-muted">reviews</p>
+                          </div>
+                        </div>
+                      </div>
+                      <ul className="mt-3 space-y-2">
+                        {(["positive", "neutral", "negative"] as Sentiment[]).map((s) => (
+                          <li key={s} className="flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2 capitalize text-muted"><span className="h-2.5 w-2.5 rounded-full" style={{ background: SENT_COLOR[s] }} />{s}</span>
+                            <span className="font-medium">{count(s)?.reviews ?? 0} <span className="text-faint">· {(count(s)?.pct ?? 0).toFixed(1)}%</span></span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : <EmptyState title="Waiting for scores" text="Score the reviews to see the sentiment mix." />}
+                </Panel>
 
-        <Card title="Rating distribution (1 to 10)">
-          <ChartBox>
-            <BarChart data={dist}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} vertical={false} />
-              <XAxis dataKey="rating" {...axis} />
-              <YAxis allowDecimals={false} {...axis} />
-              <Tooltip {...tip} cursor={{ fill: "rgba(43,181,166,.1)" }} />
-              <Bar dataKey="reviews" name="Reviews" fill="#8B9BFF" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ChartBox>
-        </Card>
+                <Panel title={d.scored ? "Volume and negative share by month" : "Volume and average rating by month"} subtitle="Bars show how many reviews arrived; the line shows the trend" className="lg:col-span-2">
+                  {monthRows.length === 0 ? <EmptyState title="No dated reviews" text="Reviews need a valid date (YYYY-MM-DD) to appear in a trend." /> : (
+                    <ChartBox height={290}>
+                      <ComposedChart data={monthRows} margin={{ top: 8, right: 4, left: -14, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="gBar" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stopColor="#4FE3C1" stopOpacity="0.85" />
+                            <stop offset="1" stopColor="#4FE3C1" stopOpacity="0.15" />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} vertical={false} />
+                        <XAxis dataKey="label" {...axisProps} />
+                        <YAxis yAxisId="l" allowDecimals={false} {...axisProps} />
+                        <YAxis yAxisId="r" orientation="right" domain={d.scored ? [0, 100] : [0, 10]} unit={d.scored ? "%" : ""} {...axisProps} />
+                        <Tooltip content={<ChartTip />} cursor={{ fill: "rgba(79,227,193,.07)" }} />
+                        <Bar yAxisId="l" dataKey="reviews" name="Reviews" fill="url(#gBar)" radius={[7, 7, 0, 0]} maxBarSize={48} />
+                        <Line yAxisId="r" type="monotone" dataKey="metric" name={d.scored ? "Negative %" : "Avg rating"} stroke={d.scored ? "#FF6B81" : "#FFB02E"} strokeWidth={2.5} dot={{ r: 4, strokeWidth: 0, fill: d.scored ? "#FF6B81" : "#FFB02E" }} activeDot={{ r: 6 }} connectNulls animationDuration={1300} />
+                      </ComposedChart>
+                    </ChartBox>
+                  )}
+                </Panel>
+              </div>
+            </Rise>
 
-        <Card title="Negative reviews over time (% of each month)">
-          {trend ? (
-            <ChartBox>
-              <LineChart data={trend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} vertical={false} />
-                <XAxis dataKey="month" {...axis} />
-                <YAxis domain={[0, 100]} unit="%" {...axis} />
-                <Tooltip {...tip} />
-                <Line type="monotone" dataKey="negative_pct" name="Negative %" stroke="#F4617F" strokeWidth={2.5} dot={{ r: 3 }} />
-              </LineChart>
-            </ChartBox>
-          ) : <p className="text-sm text-slate-500">Available after scoring.</p>}
-        </Card>
+            <Rise i={5}>
+              <div className="grid gap-5 lg:grid-cols-3">
+                <Panel title="How passengers rated" subtitle="Reviews at each rating, 1 to 10">
+                  <ChartBox height={230}>
+                    <BarChart data={dist} margin={{ top: 8, right: 4, left: -22, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.12} vertical={false} />
+                      <XAxis dataKey="rating" {...axisProps} />
+                      <YAxis allowDecimals={false} {...axisProps} />
+                      <Tooltip content={<ChartTip labelFormatter={(l) => `Rating ${l}`} />} cursor={{ fill: "rgba(148,163,184,.1)" }} />
+                      <Bar dataKey="reviews" name="Reviews" radius={[6, 6, 0, 0]}>
+                        {dist.map((x) => <Cell key={x.rating} fill={ratingColor(Number(x.rating))} />)}
+                      </Bar>
+                    </BarChart>
+                  </ChartBox>
+                </Panel>
+
+                <Panel title="Complaint themes" subtitle="In reviews rated 4 or below. Keyword match, so synonyms are missed.">
+                  {d.complaints.every((c) => c.mentions === 0) ? (
+                    <EmptyState title="No themes found" text="No complaint keywords appear in low-rated reviews in this view." />
+                  ) : (
+                    <ul className="space-y-3.5">
+                      {d.complaints.map((c, i) => (
+                        <li key={c.category}>
+                          <div className="mb-1 flex justify-between text-sm">
+                            <span className="text-muted">{c.category}</span>
+                            <span className="font-medium">{c.mentions}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-raised">
+                            <div className="grow-x h-full rounded-full bg-gradient-to-r from-[#FFB02E] to-[#FF6B81]" style={{ width: `${(c.mentions / maxMention) * 100}%`, animationDelay: `${i * 80}ms` }} />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Panel>
+
+                <Panel title="Airlines at a glance" subtitle="Average rating out of 10" action={<Link to="/compare" className="text-xs font-semibold text-accent hover:underline">Compare all</Link>}>
+                  <ul className="space-y-3.5">
+                    {topAirlines.map((a, i) => (
+                      <li key={a.airline}>
+                        <div className="mb-1 flex items-center justify-between gap-2 text-sm">
+                          <span className="truncate font-medium">{a.airline}</span>
+                          <span className="flex items-center gap-2">
+                            {a.rated_reviews < d.min_sample && <Pill tone="warn" title={`Fewer than ${d.min_sample} rated reviews`}>small sample</Pill>}
+                            <span className="font-display font-semibold">{a.avg_rating == null ? "n/a" : a.avg_rating.toFixed(1)}</span>
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-raised">
+                          <div className="grow-x h-full rounded-full" style={{ width: `${((a.avg_rating ?? 0) / 10) * 100}%`, background: ratingColor(a.avg_rating ?? 0), animationDelay: `${i * 80}ms` }} />
+                        </div>
+                        <p className="mt-1 text-[11px] text-faint">{plural(a.reviews, "review")}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </Panel>
+              </div>
+            </Rise>
+          </>
+        )}
+
+        {cr && (
+          <p className="px-1 text-xs text-faint">
+            Data cleaning: {cr.rows_in} rows read, {cr.rows_kept} kept, {cr.rows_removed} removed (empty or duplicate),{" "}
+            {cr.invalid_ratings_nulled} invalid ratings ignored in averages. Dates outside the file&apos;s range are not guessed.
+          </p>
+        )}
       </div>
     </div>
   );

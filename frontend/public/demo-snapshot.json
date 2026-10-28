@@ -1,5 +1,5 @@
 {
- "captured_at_utc": "2026-10-25T07:02:58+00:00",
+ "captured_at_utc": "2026-10-28T03:36:05+00:00",
  "dataset": {
   "source": "Demo data (demo_reviews.csv, illustrative, not real research data)",
   "cleaning_report": {
@@ -21,10 +21,19 @@
    "scored_unique_reviews": 10,
    "scored_rows": 10,
    "unscored_rows": 0,
-   "seconds": 11.21,
+   "seconds": 12.14,
    "note": "The model was trained on general social-media text, not specifically on airline reviews, so it can misjudge aviation wording. A high confidence score means the model is sure, not that it is correct."
   },
-  "uploads_enabled": true
+  "uploads_enabled": true,
+  "options": {
+   "airlines": [
+    "BlueJet",
+    "CloudAir",
+    "SkyWays"
+   ],
+   "date_min": "2024-01-05",
+   "date_max": "2024-03-22"
+  }
  },
  "queries": [
   {
@@ -50,6 +59,11 @@
   {
    "name": "complaint_categories",
    "purpose": "Complaint themes among low-rated reviews (rating 4 or below), found by keyword matching. One review can count in several categories. This is a simple keyword method, not a language model.",
+   "needs_sentiment": false
+  },
+  {
+   "name": "complaints_by_airline",
+   "purpose": "The same complaint themes, split by airline. Powers the heatmap on the Airline Comparison page. Keyword matching, so it misses synonyms.",
    "needs_sentiment": false
   },
   {
@@ -84,6 +98,7 @@
    "purpose": "Total number of reviews per airline.",
    "sql": "SELECT airline, COUNT(*) AS total_reviews\n            FROM reviews\n            GROUP BY airline\n            ORDER BY total_reviews DESC",
    "row_count": 3,
+   "elapsed_ms": 650,
    "rows": [
     {
      "airline": "SkyWays",
@@ -104,6 +119,7 @@
    "purpose": "Average passenger rating per airline (NULL ratings ignored).",
    "sql": "SELECT airline,\n                   ROUND(AVG(rating), 2) AS avg_rating,\n                   COUNT(rating) AS rated_reviews\n            FROM reviews\n            GROUP BY airline\n            ORDER BY avg_rating DESC",
    "row_count": 3,
+   "elapsed_ms": 646,
    "rows": [
     {
      "airline": "CloudAir",
@@ -127,6 +143,7 @@
    "purpose": "How many reviews gave each rating from 1 to 10.",
    "sql": "SELECT CAST(rating AS INT) AS rating, COUNT(*) AS reviews\n            FROM reviews\n            WHERE rating IS NOT NULL\n            GROUP BY CAST(rating AS INT)\n            ORDER BY rating",
    "row_count": 7,
+   "elapsed_ms": 412,
    "rows": [
     {
      "rating": 2,
@@ -163,6 +180,7 @@
    "purpose": "Review volume and average rating for each month.",
    "sql": "SELECT date_format(date, 'yyyy-MM') AS month,\n                   COUNT(*) AS reviews,\n                   ROUND(AVG(rating), 2) AS avg_rating\n            FROM reviews\n            WHERE date IS NOT NULL\n            GROUP BY date_format(date, 'yyyy-MM')\n            ORDER BY month",
    "row_count": 3,
+   "elapsed_ms": 454,
    "rows": [
     {
      "month": "2024-01",
@@ -184,15 +202,16 @@
   "complaint_categories": {
    "name": "complaint_categories",
    "purpose": "Complaint themes among low-rated reviews (rating 4 or below), found by keyword matching. One review can count in several categories. This is a simple keyword method, not a language model.",
-   "sql": "SELECT * FROM (\n                WITH complaints AS (\n                    SELECT lower(review) AS text FROM reviews WHERE rating <= 4\n                )\n                SELECT 'Delays' AS category, COUNT(*) AS mentions\n                  FROM complaints WHERE text RLIKE 'delay|cancel|waited|waiting'\n                UNION ALL\n                SELECT 'Baggage', COUNT(*)\n                  FROM complaints WHERE text RLIKE 'bag|luggage|lost'\n                UNION ALL\n                SELECT 'Customer service', COUNT(*)\n                  FROM complaints WHERE text RLIKE 'customer service|rude|unhelpful|staff'\n                UNION ALL\n                SELECT 'Seating', COUNT(*)\n                  FROM complaints WHERE text RLIKE 'seat|legroom|cramped'\n                UNION ALL\n                SELECT 'Cleanliness', COUNT(*)\n                  FROM complaints WHERE text RLIKE 'dirty|clean|smell'\n                UNION ALL\n                SELECT 'Food', COUNT(*)\n                  FROM complaints WHERE text RLIKE 'food|meal|drink'\n            )\n            ORDER BY mentions DESC",
+   "sql": "WITH complaints AS (\n    SELECT lower(review) AS text\n    FROM reviews WHERE rating <= 4\n)\nSELECT category, mentions FROM (\n        SELECT 'Delays' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'delay|cancel|waited|waiting'\n        UNION ALL\n        SELECT 'Baggage' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'bag|luggage|lost'\n        UNION ALL\n        SELECT 'Customer service' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'customer service|rude|unhelpful|staff'\n        UNION ALL\n        SELECT 'Seating' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'seat|legroom|cramped'\n        UNION ALL\n        SELECT 'Cleanliness' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'dirty|clean|smell'\n        UNION ALL\n        SELECT 'Food' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'food|meal|drink'\n)\nORDER BY mentions DESC, category",
    "row_count": 6,
+   "elapsed_ms": 1192,
    "rows": [
     {
-     "category": "Delays",
+     "category": "Customer service",
      "mentions": 2
     },
     {
-     "category": "Customer service",
+     "category": "Delays",
      "mentions": 2
     },
     {
@@ -200,11 +219,11 @@
      "mentions": 1
     },
     {
-     "category": "Seating",
+     "category": "Cleanliness",
      "mentions": 1
     },
     {
-     "category": "Cleanliness",
+     "category": "Seating",
      "mentions": 1
     },
     {
@@ -213,11 +232,51 @@
     }
    ]
   },
+  "complaints_by_airline": {
+   "name": "complaints_by_airline",
+   "purpose": "The same complaint themes, split by airline. Powers the heatmap on the Airline Comparison page. Keyword matching, so it misses synonyms.",
+   "sql": "WITH complaints AS (\n    SELECT airline, lower(review) AS text\n    FROM reviews WHERE rating <= 4\n)\nSELECT airline, category, mentions FROM (\n        SELECT airline, 'Delays' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'delay|cancel|waited|waiting' GROUP BY airline\n        UNION ALL\n        SELECT airline, 'Baggage' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'bag|luggage|lost' GROUP BY airline\n        UNION ALL\n        SELECT airline, 'Customer service' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'customer service|rude|unhelpful|staff' GROUP BY airline\n        UNION ALL\n        SELECT airline, 'Seating' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'seat|legroom|cramped' GROUP BY airline\n        UNION ALL\n        SELECT airline, 'Cleanliness' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'dirty|clean|smell' GROUP BY airline\n        UNION ALL\n        SELECT airline, 'Food' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'food|meal|drink' GROUP BY airline\n)\nORDER BY airline, mentions DESC, category",
+   "row_count": 6,
+   "elapsed_ms": 1162,
+   "rows": [
+    {
+     "airline": "BlueJet",
+     "category": "Customer service",
+     "mentions": 2
+    },
+    {
+     "airline": "BlueJet",
+     "category": "Baggage",
+     "mentions": 1
+    },
+    {
+     "airline": "BlueJet",
+     "category": "Delays",
+     "mentions": 1
+    },
+    {
+     "airline": "CloudAir",
+     "category": "Cleanliness",
+     "mentions": 1
+    },
+    {
+     "airline": "CloudAir",
+     "category": "Seating",
+     "mentions": 1
+    },
+    {
+     "airline": "SkyWays",
+     "category": "Delays",
+     "mentions": 1
+    }
+   ]
+  },
   "low_rating_share_by_airline": {
    "name": "low_rating_share_by_airline",
    "purpose": "Share of reviews rated 4 or below, per airline. Airlines with fewer than 3 rated reviews are left out so tiny samples don't look dramatic.",
    "sql": "SELECT airline,\n                   COUNT(rating) AS rated_reviews,\n                   SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END) AS low_rated,\n                   ROUND(100.0 * SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END)\n                         / COUNT(rating), 1) AS low_rating_pct\n            FROM reviews\n            WHERE rating IS NOT NULL\n            GROUP BY airline\n            HAVING COUNT(rating) >= 3\n            ORDER BY low_rating_pct DESC",
    "row_count": 3,
+   "elapsed_ms": 449,
    "rows": [
     {
      "airline": "BlueJet",
@@ -244,6 +303,7 @@
    "purpose": "Number and percentage of positive, neutral and negative reviews.",
    "sql": "SELECT sentiment,\n                   COUNT(*) AS reviews,\n                   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct\n            FROM reviews\n            WHERE sentiment IS NOT NULL\n            GROUP BY sentiment\n            ORDER BY reviews DESC",
    "row_count": 2,
+   "elapsed_ms": 398,
    "rows": [
     {
      "sentiment": "negative",
@@ -262,6 +322,7 @@
    "purpose": "Average star rating and average model confidence for each sentiment. Large gaps between sentiment and rating can point to model mistakes or to mixed reviews.",
    "sql": "SELECT sentiment,\n                   COUNT(*) AS reviews,\n                   COUNT(rating) AS rated_reviews,\n                   ROUND(AVG(rating), 2) AS avg_rating,\n                   ROUND(AVG(sentiment_confidence), 3) AS avg_confidence\n            FROM reviews\n            WHERE sentiment IS NOT NULL\n            GROUP BY sentiment\n            ORDER BY avg_rating DESC",
    "row_count": 2,
+   "elapsed_ms": 401,
    "rows": [
     {
      "sentiment": "positive",
@@ -284,6 +345,7 @@
    "purpose": "How many reviews each month were negative, and their share of that month.",
    "sql": "SELECT date_format(date, 'yyyy-MM') AS month,\n                   COUNT(*) AS reviews,\n                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,\n                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)\n                         / COUNT(*), 1) AS negative_pct\n            FROM reviews\n            WHERE date IS NOT NULL AND sentiment IS NOT NULL\n            GROUP BY date_format(date, 'yyyy-MM')\n            ORDER BY month",
    "row_count": 3,
+   "elapsed_ms": 362,
    "rows": [
     {
      "month": "2024-01",
@@ -310,6 +372,7 @@
    "purpose": "Share of negative reviews per airline. Airlines with fewer than 3 scored reviews are left out.",
    "sql": "SELECT airline,\n                   COUNT(*) AS scored_reviews,\n                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,\n                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)\n                         / COUNT(*), 1) AS negative_pct\n            FROM reviews\n            WHERE sentiment IS NOT NULL\n            GROUP BY airline\n            HAVING COUNT(*) >= 3\n            ORDER BY negative_pct DESC",
    "row_count": 3,
+   "elapsed_ms": 307,
    "rows": [
     {
      "airline": "SkyWays",
@@ -330,6 +393,218 @@
      "negative_pct": 33.3
     }
    ]
+  }
+ },
+ "dashboard": {
+  "scored": true,
+  "min_sample": 3,
+  "kpis": {
+   "reviews": 10,
+   "airlines": 3,
+   "avg_rating": 5.89,
+   "rated_reviews": 9
+  },
+  "sentiment": [
+   {
+    "sentiment": "negative",
+    "reviews": 6,
+    "pct": 60.0
+   },
+   {
+    "sentiment": "positive",
+    "reviews": 4,
+    "pct": 40.0
+   }
+  ],
+  "airlines": [
+   {
+    "airline": "SkyWays",
+    "reviews": 4,
+    "avg_rating": 6.0,
+    "rated_reviews": 3,
+    "rating_sum": 18.0,
+    "low_rated": 1,
+    "low_rating_pct": 33.3,
+    "scored_reviews": 4,
+    "positive": 1,
+    "neutral": 0,
+    "negative": 3,
+    "negative_pct": 75.0
+   },
+   {
+    "airline": "BlueJet",
+    "reviews": 3,
+    "avg_rating": 4.0,
+    "rated_reviews": 3,
+    "rating_sum": 12.0,
+    "low_rated": 2,
+    "low_rating_pct": 66.7,
+    "scored_reviews": 3,
+    "positive": 1,
+    "neutral": 0,
+    "negative": 2,
+    "negative_pct": 66.7
+   },
+   {
+    "airline": "CloudAir",
+    "reviews": 3,
+    "avg_rating": 7.67,
+    "rated_reviews": 3,
+    "rating_sum": 23.0,
+    "low_rated": 1,
+    "low_rating_pct": 33.3,
+    "scored_reviews": 3,
+    "positive": 2,
+    "neutral": 0,
+    "negative": 1,
+    "negative_pct": 33.3
+   }
+  ],
+  "rating_distribution": [
+   {
+    "rating": 2,
+    "reviews": 2
+   },
+   {
+    "rating": 3,
+    "reviews": 1
+   },
+   {
+    "rating": 4,
+    "reviews": 1
+   },
+   {
+    "rating": 6,
+    "reviews": 1
+   },
+   {
+    "rating": 8,
+    "reviews": 1
+   },
+   {
+    "rating": 9,
+    "reviews": 2
+   },
+   {
+    "rating": 10,
+    "reviews": 1
+   }
+  ],
+  "monthly": [
+   {
+    "month": "2024-01",
+    "reviews": 2,
+    "avg_rating": 6.0,
+    "negative": 1,
+    "negative_pct": 50.0
+   },
+   {
+    "month": "2024-02",
+    "reviews": 3,
+    "avg_rating": 4.67,
+    "negative": 2,
+    "negative_pct": 66.7
+   },
+   {
+    "month": "2024-03",
+    "reviews": 5,
+    "avg_rating": 6.75,
+    "negative": 3,
+    "negative_pct": 60.0
+   }
+  ],
+  "complaints": [
+   {
+    "category": "Customer service",
+    "mentions": 2
+   },
+   {
+    "category": "Delays",
+    "mentions": 2
+   },
+   {
+    "category": "Baggage",
+    "mentions": 1
+   },
+   {
+    "category": "Cleanliness",
+    "mentions": 1
+   },
+   {
+    "category": "Seating",
+    "mentions": 1
+   },
+   {
+    "category": "Food",
+    "mentions": 0
+   }
+  ],
+  "options": {
+   "airlines": [
+    "BlueJet",
+    "CloudAir",
+    "SkyWays"
+   ],
+   "date_min": "2024-01-05",
+   "date_max": "2024-03-22"
+  },
+  "sql": {
+   "airlines": "SELECT airline,\n                   COUNT(*) AS reviews,\n                   ROUND(AVG(rating), 2) AS avg_rating,\n                   COUNT(rating) AS rated_reviews,\n                   SUM(rating) AS rating_sum,\n                   SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END) AS low_rated,\n                   ROUND(100.0 * SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END)\n                         / NULLIF(COUNT(rating), 0), 1) AS low_rating_pct,\n                   COUNT(sentiment) AS scored_reviews,\n                   SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive,\n                   SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral,\n                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,\n                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)\n                         / NULLIF(COUNT(sentiment), 0), 1) AS negative_pct\n            FROM filtered_reviews\n            GROUP BY airline\n            ORDER BY reviews DESC, airline",
+   "rating_distribution": "SELECT CAST(rating AS INT) AS rating, COUNT(*) AS reviews\n            FROM filtered_reviews\n            WHERE rating IS NOT NULL\n            GROUP BY CAST(rating AS INT)\n            ORDER BY rating",
+   "monthly": "SELECT date_format(date, 'yyyy-MM') AS month,\n                   COUNT(*) AS reviews,\n                   ROUND(AVG(rating), 2) AS avg_rating,\n                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,\n                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)\n                         / NULLIF(COUNT(sentiment), 0), 1) AS negative_pct\n            FROM filtered_reviews\n            WHERE date IS NOT NULL\n            GROUP BY date_format(date, 'yyyy-MM')\n            ORDER BY month",
+   "complaints": "WITH complaints AS (\n    SELECT lower(review) AS text\n    FROM filtered_reviews WHERE rating <= 4\n)\nSELECT category, mentions FROM (\n        SELECT 'Delays' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'delay|cancel|waited|waiting'\n        UNION ALL\n        SELECT 'Baggage' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'bag|luggage|lost'\n        UNION ALL\n        SELECT 'Customer service' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'customer service|rude|unhelpful|staff'\n        UNION ALL\n        SELECT 'Seating' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'seat|legroom|cramped'\n        UNION ALL\n        SELECT 'Cleanliness' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'dirty|clean|smell'\n        UNION ALL\n        SELECT 'Food' AS category, COUNT(*) AS mentions\n          FROM complaints WHERE text RLIKE 'food|meal|drink'\n)\nORDER BY mentions DESC, category"
+  },
+  "cached": false,
+  "elapsed_ms": 1159
+ },
+ "predictions": {
+  "The flight was delayed three hours and the staff were rude.": {
+   "label": "negative",
+   "confidence": 0.9318,
+   "scores": {
+    "negative": 0.9318,
+    "neutral": 0.0633,
+    "positive": 0.0049
+   },
+   "method": "transformer",
+   "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+   "note": "The model was trained on general social-media text, not specifically on airline reviews, so it can misjudge aviation wording. A high confidence score means the model is sure, not that it is correct."
+  },
+  "Lovely crew, comfortable seats, would fly again.": {
+   "label": "positive",
+   "confidence": 0.9814,
+   "scores": {
+    "negative": 0.0043,
+    "neutral": 0.0143,
+    "positive": 0.9814
+   },
+   "method": "transformer",
+   "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+   "note": "The model was trained on general social-media text, not specifically on airline reviews, so it can misjudge aviation wording. A high confidence score means the model is sure, not that it is correct."
+  },
+  "The flight departed at 9am and landed at 11am.": {
+   "label": "neutral",
+   "confidence": 0.9433,
+   "scores": {
+    "negative": 0.0095,
+    "neutral": 0.9433,
+    "positive": 0.0472
+   },
+   "method": "transformer",
+   "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+   "note": "The model was trained on general social-media text, not specifically on airline reviews, so it can misjudge aviation wording. A high confidence score means the model is sure, not that it is correct."
+  },
+  "Lost my bags, and customer service blamed me for it.": {
+   "label": "negative",
+   "confidence": 0.9102,
+   "scores": {
+    "negative": 0.9102,
+    "neutral": 0.0845,
+    "positive": 0.0054
+   },
+   "method": "transformer",
+   "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+   "note": "The model was trained on general social-media text, not specifically on airline reviews, so it can misjudge aviation wording. A high confidence score means the model is sure, not that it is correct."
   }
  },
  "benchmark": {

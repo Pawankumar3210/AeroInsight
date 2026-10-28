@@ -1,3 +1,9 @@
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+
 from pyspark.sql import SparkSession, functions as F
 
 from .config import MIN_AIRLINE_SAMPLE
@@ -5,6 +11,18 @@ from .config import MIN_AIRLINE_SAMPLE
 REQUIRED_COLUMNS = ["airline", "review", "rating", "date"]
 SORTABLE_COLUMNS = {"airline", "rating", "date"}
 _spark = None  # created once, reused for every request
+_dash_cache: dict = {}  # filter combination -> finished dashboard; cleared whenever the data changes
+_dash_lock = threading.Lock()
+_options: dict = {"airlines": [], "date_min": None, "date_max": None}  # refreshed on every load
+
+
+def clear_dashboard_cache() -> None:
+    with _dash_lock:
+        _dash_cache.clear()
+
+
+def get_options() -> dict:
+    return dict(_options)
 
 
 def get_spark() -> SparkSession:
@@ -64,6 +82,13 @@ def load_reviews(path: str) -> dict:
     df.cache()
     rows_out = df.count()
     df.createOrReplaceTempView("reviews")
+    clear_dashboard_cache()
+
+    # Dropdown options are cheap to keep: compute them once per dataset, not per request.
+    bounds = df.agg(F.min("date").alias("lo"), F.max("date").alias("hi")).collect()[0]
+    _options["airlines"] = sorted(r["airline"] for r in df.select("airline").distinct().collect())
+    _options["date_min"] = str(bounds["lo"]) if bounds["lo"] else None
+    _options["date_max"] = str(bounds["hi"]) if bounds["hi"] else None
 
     return {
         "rows_in": rows_in,
@@ -74,7 +99,46 @@ def load_reviews(path: str) -> dict:
     }
 
 
-# ---- Spark SQL queries (shown on the "Spark SQL Insights" page later) ----
+# ---- Complaint themes: keyword patterns (a simple method, not a language model) ----
+COMPLAINT_PATTERNS = {
+    "Delays": "delay|cancel|waited|waiting",
+    "Baggage": "bag|luggage|lost",
+    "Customer service": "customer service|rude|unhelpful|staff",
+    "Seating": "seat|legroom|cramped",
+    "Cleanliness": "dirty|clean|smell",
+    "Food": "food|meal|drink",
+}
+
+
+def complaint_sql(view: str = "reviews", by_airline: bool = False) -> str:
+    """SQL that counts complaint themes among reviews rated 4 or below."""
+    sep = "\n        UNION ALL\n        "
+    if by_airline:
+        parts = sep.join(
+            f"SELECT airline, '{c}' AS category, COUNT(*) AS mentions\n"
+            f"          FROM complaints WHERE text RLIKE '{p}' GROUP BY airline"
+            for c, p in COMPLAINT_PATTERNS.items()
+        )
+        return (
+            f"WITH complaints AS (\n    SELECT airline, lower(review) AS text\n"
+            f"    FROM {view} WHERE rating <= 4\n)\n"
+            f"SELECT airline, category, mentions FROM (\n        {parts}\n)\n"
+            f"ORDER BY airline, mentions DESC, category"
+        )
+    parts = sep.join(
+        f"SELECT '{c}' AS category, COUNT(*) AS mentions\n"
+        f"          FROM complaints WHERE text RLIKE '{p}'"
+        for c, p in COMPLAINT_PATTERNS.items()
+    )
+    return (
+        f"WITH complaints AS (\n    SELECT lower(review) AS text\n"
+        f"    FROM {view} WHERE rating <= 4\n)\n"
+        f"SELECT category, mentions FROM (\n        {parts}\n)\n"
+        f"ORDER BY mentions DESC, category"
+    )
+
+
+# ---- Spark SQL queries (shown on the "Spark SQL Insights" page) ----
 QUERIES = {
     "reviews_by_airline": {
         "purpose": "Total number of reviews per airline.",
@@ -124,31 +188,14 @@ QUERIES = {
             "keyword matching. One review can count in several categories. This is a "
             "simple keyword method, not a language model."
         ),
-        "sql": """
-            SELECT * FROM (
-                WITH complaints AS (
-                    SELECT lower(review) AS text FROM reviews WHERE rating <= 4
-                )
-                SELECT 'Delays' AS category, COUNT(*) AS mentions
-                  FROM complaints WHERE text RLIKE 'delay|cancel|waited|waiting'
-                UNION ALL
-                SELECT 'Baggage', COUNT(*)
-                  FROM complaints WHERE text RLIKE 'bag|luggage|lost'
-                UNION ALL
-                SELECT 'Customer service', COUNT(*)
-                  FROM complaints WHERE text RLIKE 'customer service|rude|unhelpful|staff'
-                UNION ALL
-                SELECT 'Seating', COUNT(*)
-                  FROM complaints WHERE text RLIKE 'seat|legroom|cramped'
-                UNION ALL
-                SELECT 'Cleanliness', COUNT(*)
-                  FROM complaints WHERE text RLIKE 'dirty|clean|smell'
-                UNION ALL
-                SELECT 'Food', COUNT(*)
-                  FROM complaints WHERE text RLIKE 'food|meal|drink'
-            )
-            ORDER BY mentions DESC
-        """,
+        "sql": complaint_sql("reviews"),
+    },
+    "complaints_by_airline": {
+        "purpose": (
+            "The same complaint themes, split by airline. Powers the heatmap on the "
+            "Airline Comparison page. Keyword matching, so it misses synonyms."
+        ),
+        "sql": complaint_sql("reviews", by_airline=True),
     },
     "low_rating_share_by_airline": {
         "purpose": (
@@ -201,6 +248,7 @@ def attach_sentiment(predict_fn, max_rows: int) -> dict:
     scored_rows = scored.filter(F.col("sentiment").isNotNull()).count()
     total_rows = scored.count()
     scored.createOrReplaceTempView("reviews")
+    clear_dashboard_cache()
 
     return {
         "method": preds[0]["method"] if preds else None,
@@ -287,18 +335,19 @@ def run_query(name: str) -> dict:
     q = QUERIES[name]
     if q.get("needs_sentiment") and not has_sentiment():
         raise SentimentNotScored("Reviews have not been scored yet.")
+    start = time.perf_counter()
     rows = [r.asDict() for r in get_spark().sql(q["sql"]).collect()]
     return {
         "name": name,
         "purpose": q["purpose"],
         "sql": q["sql"].strip(),
         "row_count": len(rows),
+        "elapsed_ms": round((time.perf_counter() - start) * 1000),
         "rows": rows,
     }
 
 
 def _parse_date(value: str, name: str):
-    from datetime import date
     try:
         return date.fromisoformat(value)
     except ValueError:
@@ -347,3 +396,112 @@ def search_reviews(search: str, airline: str, sort: str, order: str,
     rows = df.orderBy(col, "review").limit(offset + limit).collect()[offset:]
     return {"total": total, "limit": limit, "offset": offset,
             "rows": [r.asDict() for r in rows]}
+
+
+def dashboard(airline: str = "", sentiment: str = "", min_rating=None, max_rating=None,
+              date_from: str = "", date_to: str = "") -> dict:
+    """Everything the Overview page needs, computed with Spark SQL on the filtered reviews.
+
+    Four queries run in parallel. KPI totals and sentiment counts are summed from the
+    per-airline rows in Python, so Spark does not need extra jobs for them."""
+    start = time.perf_counter()
+    key = (airline, sentiment, min_rating, max_rating, date_from, date_to)
+    with _dash_lock:
+        hit = _dash_cache.get(key)
+    if hit is not None:
+        return {**hit, "cached": True, "elapsed_ms": round((time.perf_counter() - start) * 1000)}
+
+    spark = get_spark()
+    df = filtered_reviews("", airline, sentiment, min_rating, max_rating, date_from, date_to)
+    scored = "sentiment" in df.columns
+    view = "dash_" + uuid.uuid4().hex[:10]  # unique per request, dropped afterwards
+    df.createOrReplaceTempView(view)
+
+    sentiment_cols = f""",
+                   COUNT(sentiment) AS scored_reviews,
+                   SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive,
+                   SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral,
+                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,
+                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)
+                         / NULLIF(COUNT(sentiment), 0), 1) AS negative_pct""" if scored else ""
+    monthly_cols = f""",
+                   SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative,
+                   ROUND(100.0 * SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END)
+                         / NULLIF(COUNT(sentiment), 0), 1) AS negative_pct""" if scored else ""
+    sql = {
+        "airlines": f"""
+            SELECT airline,
+                   COUNT(*) AS reviews,
+                   ROUND(AVG(rating), 2) AS avg_rating,
+                   COUNT(rating) AS rated_reviews,
+                   SUM(rating) AS rating_sum,
+                   SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END) AS low_rated,
+                   ROUND(100.0 * SUM(CASE WHEN rating <= 4 THEN 1 ELSE 0 END)
+                         / NULLIF(COUNT(rating), 0), 1) AS low_rating_pct{sentiment_cols}
+            FROM {view}
+            GROUP BY airline
+            ORDER BY reviews DESC, airline""",
+        "rating_distribution": f"""
+            SELECT CAST(rating AS INT) AS rating, COUNT(*) AS reviews
+            FROM {view}
+            WHERE rating IS NOT NULL
+            GROUP BY CAST(rating AS INT)
+            ORDER BY rating""",
+        "monthly": f"""
+            SELECT date_format(date, 'yyyy-MM') AS month,
+                   COUNT(*) AS reviews,
+                   ROUND(AVG(rating), 2) AS avg_rating{monthly_cols}
+            FROM {view}
+            WHERE date IS NOT NULL
+            GROUP BY date_format(date, 'yyyy-MM')
+            ORDER BY month""",
+        "complaints": complaint_sql(view),
+    }
+
+    def run(text: str) -> list:
+        return [r.asDict() for r in spark.sql(text).collect()]
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {name: pool.submit(run, text) for name, text in sql.items()}
+            out = {name: f.result() for name, f in futures.items()}
+    finally:
+        spark.catalog.dropTempView(view)
+
+    airlines = out["airlines"]
+    rated = sum(a["rated_reviews"] for a in airlines)
+    rating_sum = sum(a["rating_sum"] or 0 for a in airlines)
+    kpis = {
+        "reviews": sum(a["reviews"] for a in airlines),
+        "airlines": len(airlines),
+        "avg_rating": round(rating_sum / rated, 2) if rated else None,
+        "rated_reviews": rated,
+    }
+    sentiment_rows = []
+    if scored:
+        total = sum(a["scored_reviews"] for a in airlines)
+        for label in ("positive", "neutral", "negative"):
+            n = sum(a[label] for a in airlines)
+            if n:
+                sentiment_rows.append({"sentiment": label, "reviews": n, "pct": round(100.0 * n / total, 1)})
+        sentiment_rows.sort(key=lambda r: -r["reviews"])
+
+    result = {
+        "scored": scored,
+        "min_sample": MIN_AIRLINE_SAMPLE,
+        "kpis": kpis,
+        "sentiment": sentiment_rows,
+        "airlines": airlines,
+        "rating_distribution": out["rating_distribution"],
+        "monthly": out["monthly"],
+        "complaints": out["complaints"],
+        "options": get_options(),
+        "sql": {k: v.replace(view, "filtered_reviews").strip() for k, v in sql.items()},
+        "cached": False,
+        "elapsed_ms": round((time.perf_counter() - start) * 1000),
+    }
+    with _dash_lock:
+        if len(_dash_cache) >= 32:
+            _dash_cache.pop(next(iter(_dash_cache)))  # drop the oldest entry
+        _dash_cache[key] = result
+    return result

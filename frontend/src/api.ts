@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { ReviewRow } from "./types";
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 const NO_BACKEND = BASE === "none"; // used on Vercel: always show the saved snapshot
@@ -12,17 +13,15 @@ export class ApiError extends Error {
 }
 
 // ---------- demo snapshot mode ----------
-interface SnapRow {
-  review: string; airline: string; rating: number | null; date: string | null;
-  sentiment?: string | null; sentiment_confidence?: number | null; sentiment_method?: string | null;
-}
 interface Snapshot {
   captured_at_utc: string;
   dataset: Dataset;
   queries: unknown;
   spark: Record<string, unknown>;
   benchmark: unknown | null;
-  reviews: SnapRow[];
+  dashboard?: unknown;
+  predictions?: Record<string, unknown>;
+  reviews: ReviewRow[];
 }
 
 let demoSince: string | null = null; // set when the snapshot is being shown
@@ -82,7 +81,7 @@ function demoReviews(snap: Snapshot, query: string) {
     return true;
   });
 
-  const key = (r: SnapRow): string | number | null =>
+  const key = (r: ReviewRow): string | number | null =>
     sort === "rating" ? r.rating : sort === "airline" ? r.airline : r.date;
   rows = [...rows].sort((a, b) => {
     const va = key(a);
@@ -101,6 +100,12 @@ async function demoResponse<T>(path: string): Promise<T> {
   const [route, query = ""] = path.split("?");
   if (route === "/api/dataset") return out<T>({ ...snap.dataset, uploads_enabled: false });
   if (route === "/api/queries") return out<T>(snap.queries);
+  if (route === "/api/dashboard") {
+    if (!snap.dashboard) {
+      throw new ApiError("This snapshot is from an older version. Regenerate it with: python -m app.make_snapshot", 404);
+    }
+    return out<T>(snap.dashboard);
+  }
   if (route === "/api/benchmark") {
     if (!snap.benchmark) throw new ApiError("No benchmark in the snapshot.", 404);
     return out<T>(snap.benchmark);
@@ -114,6 +119,23 @@ async function demoResponse<T>(path: string): Promise<T> {
   throw new ApiError("This feature needs the live backend.", 0);
 }
 
+/** Saved transformer results for the example reviews, so the snapshot demo can still show a verdict. */
+async function demoPredict<T>(init?: RequestInit): Promise<T | null> {
+  try {
+    const text = (JSON.parse(String(init?.body ?? "{}")) as { text?: string }).text ?? "";
+    const snap = await loadSnapshot();
+    const hit = snap.predictions?.[text];
+    if (!hit) return null;
+    if (!demoSince) {
+      demoSince = snap.captured_at_utc;
+      listeners.forEach((l) => l());
+    }
+    return out<T>(hit);
+  } catch {
+    return null;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isGet = !init || !init.method || init.method === "GET";
   let res: Response;
@@ -121,6 +143,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (NO_BACKEND) throw new Error("no backend configured");
     res = await fetch(BASE + path, init);
   } catch {
+    if (!isGet && path === "/api/sentiment/predict") {
+      const saved = await demoPredict<T>(init);
+      if (saved) return saved;
+      throw new ApiError("In this saved snapshot only the four example reviews can be analyzed. Run the live backend to analyze your own text.", 0);
+    }
     if (isGet) {
       try {
         const data = await demoResponse<T>(path);
@@ -174,12 +201,14 @@ export interface QueryResult<R> {
   purpose: string;
   sql: string;
   row_count: number;
+  elapsed_ms?: number;
   rows: R[];
 }
 
 export interface Dataset {
   source: string;
   uploads_enabled?: boolean;
+  options?: { airlines: string[]; date_min: string | null; date_max: string | null };
   cleaning_report: {
     rows_in: number;
     rows_kept: number;

@@ -2,47 +2,151 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-[#F4F6FB] text-slate-800 antialiased dark:bg-navy-950 dark:text-slate-200;
+:root {
+  --canvas: 243 245 250;
+  --panel: 255 255 255;
+  --raised: 246 248 252;
+  --line: 226 231 241;
+  --ink: 13 20 38;
+  --muted: 84 96 124;
+  --faint: 134 145 168;
+  --accent: 7 128 108;
+  --accent-ink: 255 255 255;
+  --warn: 176 96 0;
+  --pos: 4 140 98;
+  --neu: 100 116 139;
+  --neg: 214 40 76;
+  --shadow: 0 1px 2px rgb(13 20 38 / 0.04), 0 10px 28px -14px rgb(13 20 38 / 0.12);
 }
-.dark body {
-  background-image: radial-gradient(900px 400px at 80% -10%, rgba(51, 197, 178, 0.07), transparent 60%);
-  background-attachment: fixed;
-}
-h1, h2, h3 {
-  @apply font-display tracking-tight;
-}
-:focus-visible {
-  outline: 2px solid #33c5b2;
-  outline-offset: 2px;
-}
-.tnum {
-  font-variant-numeric: tabular-nums;
+.dark {
+  --canvas: 6 9 18;
+  --panel: 13 19 34;
+  --raised: 19 27 47;
+  --line: 33 44 70;
+  --ink: 232 236 246;
+  --muted: 144 155 181;
+  --faint: 95 107 135;
+  --accent: 79 227 193;
+  --accent-ink: 4 22 19;
+  --warn: 255 176 46;
+  --pos: 52 211 153;
+  --neu: 139 152 179;
+  --neg: 255 107 129;
+  --shadow: inset 0 1px 0 rgb(255 255 255 / 0.035);
+  color-scheme: dark;
 }
 
+html { font-feature-settings: "tnum" 1, "cv11" 1; }
+body {
+  @apply bg-canvas font-sans text-ink antialiased;
+  background-attachment: fixed;
+}
+h1, h2, h3 { @apply font-display tracking-tight; }
+::selection { background: rgb(79 227 193 / 0.3); }
+@layer base {
+  :focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
+}
+
+/* slim scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgb(var(--line)) transparent; }
+
 .skeleton {
-  background: linear-gradient(100deg, rgba(148, 163, 184, 0.14) 30%, rgba(148, 163, 184, 0.28) 50%, rgba(148, 163, 184, 0.14) 70%);
+  background: linear-gradient(100deg, rgb(148 163 184 / 0.12) 30%, rgb(148 163 184 / 0.26) 50%, rgb(148 163 184 / 0.12) 70%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
 }
-@keyframes shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-.route-draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: draw 3.4s cubic-bezier(0.4, 0, 0.2, 1) 0.2s forwards;
+.rise { animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.route-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 3.2s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+.flow-dash { stroke-dasharray: 4 6; animation: flow 1.2s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -20; } }
+
+.grow-x { transform-origin: left; animation: growx 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+
+
+/* ---------- ambient background ---------- */
+.aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.aurora i { position: absolute; border-radius: 9999px; filter: blur(90px); will-change: transform; }
+.aurora i:nth-child(1) { width: 46vw; height: 46vw; right: -12vw; top: -20vw; background: rgb(var(--accent) / 0.17); animation: drift1 26s ease-in-out infinite alternate; }
+.aurora i:nth-child(2) { width: 40vw; height: 40vw; left: -12vw; top: 8vh; background: rgb(99 102 241 / 0.17); animation: drift2 32s ease-in-out infinite alternate; }
+.aurora i:nth-child(3) { width: 30vw; height: 30vw; right: 6vw; bottom: -14vw; background: rgb(255 176 46 / 0.09); animation: drift1 38s ease-in-out infinite alternate-reverse; }
+:root:not(.dark) .aurora i { opacity: 0.55; }
+.aurora::after {
+  content: ""; position: absolute; inset: 0;
+  background-image: linear-gradient(rgb(var(--ink) / 0.045) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--ink) / 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 18%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 18%, #000 0%, transparent 75%);
 }
-@keyframes draw {
-  to { stroke-dashoffset: 0; }
+@keyframes drift1 { to { transform: translate3d(-7vw, 9vh, 0) scale(1.16); } }
+@keyframes drift2 { to { transform: translate3d(8vw, -6vh, 0) scale(1.12); } }
+
+/* ---------- buttons ---------- */
+.shine { position: relative; overflow: hidden; }
+.shine::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.38) 50%, transparent 70%);
+  transform: translateX(-130%); transition: transform 0.75s ease;
 }
+.shine:hover::after { transform: translateX(130%); }
+
+/* ---------- entrances ---------- */
+.page-enter { animation: pageIn 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.pop { animation: pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@keyframes pop { from { opacity: 0; transform: translateY(-10px) scale(0.97); } to { opacity: 1; transform: none; } }
+.slide-in { animation: slideIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
+.fade-in { animation: fadeIn 0.25s ease backwards; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.cell-in { animation: cellIn 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+@keyframes cellIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: none; } }
+
+/* ---------- data-viz motion ---------- */
+.spark-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.3s 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.spin-slow { animation: spin 9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.twinkle { animation: twinkle 3.4s ease-in-out infinite; }
+@keyframes twinkle { 0%, 100% { opacity: 0.08; } 50% { opacity: 0.85; } }
+
+/* analyzer: scanning laser while the model reads */
+.scanbox { position: relative; overflow: hidden; border-radius: 0.75rem; }
+.scanbox.on::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 36%; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgb(var(--accent) / 0.22), transparent);
+  border-bottom: 1px solid rgb(var(--accent) / 0.8);
+  animation: scan 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes scan { from { top: -36%; } to { top: 100%; } }
+
+/* boarding pass: stamped verdict + barcode laser */
+.stamp { animation: stamp 0.55s cubic-bezier(0.2, 0.9, 0.2, 1.2) 0.15s backwards; transform-origin: left center; }
+@keyframes stamp {
+  0% { opacity: 0; transform: scale(1.7) rotate(-5deg); filter: blur(8px); }
+  60% { opacity: 1; transform: scale(0.97) rotate(0.6deg); filter: blur(0); }
+  100% { opacity: 1; transform: none; }
+}
+.pass-in { animation: passIn 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@keyframes passIn { from { opacity: 0; transform: translateY(18px) scale(0.98); } to { opacity: 1; transform: none; } }
+.laser { animation: laser 2.2s ease-in-out infinite alternate; }
+@keyframes laser { from { transform: translateX(0); } to { transform: translateX(calc(148px - 2px)); } }
+
+.nav-icon { transition: transform 0.25s ease; }
+a:hover > .nav-icon { transform: translateX(2px) scale(1.08); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.001ms !important;
   }
+  .aurora i, .twinkle, .spin-slow, .laser { animation: none; }
 }

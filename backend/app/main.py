@@ -54,7 +54,7 @@ def health():
 def dataset():
     return {"source": state["source"], "cleaning_report": state["report"],
             "required_columns": sa.REQUIRED_COLUMNS, "sentiment": state["sentiment"],
-            "uploads_enabled": ENABLE_UPLOADS}
+            "uploads_enabled": ENABLE_UPLOADS, "options": sa.get_options()}
 
 
 @app.get("/api/queries")
@@ -72,6 +72,17 @@ def spark_query(query_name: str):
     except sa.SentimentNotScored:
         raise HTTPException(409, "This query needs sentiment scores. "
                                  "Run POST /api/sentiment/score first.")
+
+
+@app.get("/api/dashboard")
+def dashboard(airline: str = "", sentiment: str = "",
+              min_rating: float | None = None, max_rating: float | None = None,
+              date_from: str = "", date_to: str = ""):
+    """All Overview numbers, computed by Spark SQL on the filtered reviews."""
+    try:
+        return sa.dashboard(airline, sentiment, min_rating, max_rating, date_from, date_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/reviews")
@@ -233,4 +244,3 @@ def benchmark_run(sizes: str = "1000,10000,100000"):
         raise HTTPException(400, str(e))
     finally:
         bench_lock.release()
-        

@@ -21,8 +21,9 @@ def reset_demo(client):
 
 def test_query_list(client):
     names = [q["name"] for q in client.get("/api/queries").json()]
-    assert len(names) == 10
+    assert len(names) == 11
     assert "complaint_categories" in names
+    assert "complaints_by_airline" in names
 
 
 def test_rating_filter(client):
@@ -46,4 +47,3 @@ def test_export_csv(client):
     rows = list(csv.reader(io.StringIO(r.text)))
     assert rows[0] == ["airline", "review", "rating", "date"]
     assert len(rows) == 1 + 4  # header + 4 SkyWays reviews
-    

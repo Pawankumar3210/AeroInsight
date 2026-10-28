@@ -11,8 +11,19 @@ BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/
 OUT = Path(__file__).resolve().parents[2] / "frontend" / "public" / "demo-snapshot.json"
 
 
-def call(path: str, method: str = "GET"):
-    req = urllib.request.Request(BASE + path, method=method, data=b"" if method == "POST" else None)
+# Keep in sync with EXAMPLES in frontend/src/pages/Analyzer.tsx
+EXAMPLES = [
+    "The flight was delayed three hours and the staff were rude.",
+    "Lovely crew, comfortable seats, would fly again.",
+    "The flight departed at 9am and landed at 11am.",
+    "Lost my bags, and customer service blamed me for it.",
+]
+
+
+def call(path: str, method: str = "GET", body: dict | None = None):
+    data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(BASE + path, method=method, data=data,
+                                 headers={"Content-Type": "application/json"} if body is not None else {})
     try:
         with urllib.request.urlopen(req, timeout=300) as r:
             return json.loads(r.read())
@@ -24,7 +35,7 @@ def call(path: str, method: str = "GET"):
         raise SystemExit(f"Cannot reach {BASE}: {e.reason}. Is the backend running?")
 
 
-if (call("/api/dataset") or {}).get("source", "").startswith("Demo data") is False:
+if not (call("/api/dataset") or {}).get("source", "").startswith("Demo data"):
     print("Restoring the demo data first...")
     call("/api/reset", "POST")
 
@@ -40,13 +51,22 @@ spark = {}
 for q in queries:
     spark[q["name"]] = call("/api/spark/" + q["name"])
     print("  saved", q["name"])
+predictions = {}
+for text in EXAMPLES:
+    pred = call("/api/sentiment/predict", "POST", {"text": text})
+    if pred["method"] != "transformer":
+        raise SystemExit("An example was not read by the transformer; refusing to save it.")
+    predictions[text] = pred
+print(f"  saved {len(predictions)} example predictions")
+dashboard = call("/api/dashboard")
+print("  saved dashboard")
 reviews = call("/api/reviews?limit=100&sort=date&order=desc")["rows"]
 
 snapshot = {
     "captured_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    "dataset": dataset, "queries": queries, "spark": spark,
+    "dataset": dataset, "queries": queries, "spark": spark, "dashboard": dashboard, "predictions": predictions,
     "benchmark": call("/api/benchmark"), "reviews": reviews,
 }
 OUT.parent.mkdir(parents=True, exist_ok=True)
 OUT.write_text(json.dumps(snapshot, indent=1))
-print(f"Saved {len(reviews)} reviews and {len(spark)} query results to {OUT}")
+print(f"Saved {len(reviews)} reviews, {len(spark)} query results, the dashboard and {len(predictions)} predictions to {OUT}")
